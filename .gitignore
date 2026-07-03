@@ -1,0 +1,36 @@
+# ── 대용량 배포 번들 (Python·ffmpeg·모델 포함, 각 ~1.8GB) ──
+배포/
+배포_무설치/
+배포_요약기_무설치/
+*.zip
+
+# ── 실행 결과물 · 테스트 ──
+output/
+테스트/
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.srt
+*.jpg
+*.jpeg
+*.png
+*.webp
+
+# ── 파이썬 캐시 / 가상환경 ──
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# ── 에디터 / 도구 설정 ──
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── 다운로드된 모델 / ffmpeg 바이너리 ──
+ffmpeg/
+*.pt

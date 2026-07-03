@@ -1,0 +1,227 @@
+"""완성 영상 만들기 - 영상 + 자막(SRT) + 썸네일을 하나의 완성 mp4로 합친다.
+
+  - 자막: 영상 화면에 새겨넣기(하드섭). 어디서 재생해도 자막이 보인다.
+  - 썸네일: (1) 영상 맨 앞에 2~3초 인트로로 붙이고, (2) mp4 표지(커버)로도 삽입.
+
+ffmpeg 만 사용하며, 배포 폴더 옆의 ffmpeg/bin 을 자동으로 PATH 에 추가한다.
+"""
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+def _setup_bundled_paths():
+    """포터블 배포용: 스크립트 폴더 옆의 ffmpeg/bin 을 PATH 에 추가."""
+    base = os.path.dirname(os.path.abspath(__file__))
+    for rel in (os.path.join("ffmpeg", "bin"), "ffmpeg"):
+        p = os.path.join(base, rel)
+        if os.path.isdir(p) and os.path.exists(os.path.join(p, "ffmpeg.exe")):
+            os.environ["PATH"] = p + os.pathsep + os.environ.get("PATH", "")
+            break
+
+
+_setup_bundled_paths()
+
+# Windows: 하위 프로세스가 별도 콘솔(검은 창)을 띄우지 않도록.
+_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+_PROC_KW = dict(stdin=subprocess.DEVNULL, creationflags=_CREATE_NO_WINDOW)
+
+
+def run(cmd, **kwargs):
+    kw = dict(_PROC_KW)
+    kw.update(kwargs)
+    result = subprocess.run(cmd, check=True, capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", **kw)
+    return result.stdout.strip()
+
+
+def run_ffmpeg(cmd, label: str = "", cwd: str = None) -> None:
+    """ffmpeg 실행: 콘솔창 숨김 + stdin 차단 + 진행상황(time=) 스트리밍."""
+    if cmd and "ffmpeg" in os.path.basename(str(cmd[0])).lower():
+        cmd = [cmd[0], "-nostdin", "-hide_banner"] + list(cmd[1:])
+
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace", cwd=cwd, **_PROC_KW,
+    )
+    last = ""
+    for raw in proc.stdout:
+        line = raw.rstrip("\r\n")
+        if not line:
+            continue
+        low = line.lower()
+        if "time=" in line or "error" in low or "invalid" in low or "failed" in low:
+            last = line
+            print(f"    {label} {line}".rstrip(), flush=True)
+    proc.wait()
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=last)
+
+
+def get_video_props(path: str):
+    """영상의 (가로, 세로, 프레임레이트문자열) 을 ffprobe 로 읽는다."""
+    out = run(["ffprobe", "-v", "quiet", "-print_format", "json",
+               "-select_streams", "v:0",
+               "-show_entries", "stream=width,height,r_frame_rate", path])
+    data = json.loads(out)
+    st = data["streams"][0]
+    w = int(st["width"])
+    h = int(st["height"])
+    fps = st.get("r_frame_rate", "30/1")
+    if not fps or fps == "0/0":
+        fps = "30/1"
+    return w, h, fps
+
+
+# 인코딩 공통 옵션 (인트로/본편이 같은 규격이라야 재인코딩 없이 이어붙일 수 있다)
+def _enc_opts(fps: str):
+    return ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-r", fps,
+            "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+            "-fps_mode", "cfr", "-muxpreload", "0", "-muxdelay", "0",
+            "-f", "mpegts"]
+
+
+def make_intro(thumb: str, w: int, h: int, fps: str, seconds: float,
+               out_ts: str) -> None:
+    """썸네일을 영상 규격(WxH, fps)에 맞춰 seconds 초짜리 무음 인트로로 만든다."""
+    vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+          f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p")
+    cmd = ["ffmpeg", "-y",
+           "-loop", "1", "-t", f"{seconds}", "-i", thumb,
+           "-f", "lavfi", "-t", f"{seconds}", "-i", "anullsrc=r=44100:cl=stereo",
+           "-vf", vf] + _enc_opts(fps) + ["-shortest", out_ts]
+    run_ffmpeg(cmd, label="(인트로)")
+
+
+def burn_subs(video: str, srt_name: str, w: int, h: int, fps: str,
+              out_ts: str, cwd: str, font: str, font_size: int) -> None:
+    """본편 영상에 자막을 하드섭으로 새겨넣는다.
+
+    subtitles 필터의 경로는 Windows 에서 콜론/역슬래시 이스케이프가 까다로워,
+    SRT 를 작업 폴더(cwd)에 복사한 뒤 상대 경로(srt_name)로 참조한다.
+    """
+    style = (f"FontName={font},FontSize={font_size},"
+             f"PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,"
+             f"BorderStyle=1,Outline=2,Shadow=1,MarginV=28")
+    vf = (f"scale={w}:{h},setsar=1,"
+          f"subtitles={srt_name}:force_style='{style}',format=yuv420p")
+    cmd = ["ffmpeg", "-y", "-i", video, "-vf", vf] + _enc_opts(fps) + [out_ts]
+    run_ffmpeg(cmd, label="(자막)", cwd=cwd)
+
+
+def concat_ts(ts_files, out_mp4: str, tmpdir: str) -> None:
+    """TS 조각들을 concat 디먹서로 이어붙여 mp4 로 담는다(재인코딩 X)."""
+    list_path = os.path.join(tmpdir, "concat_list.txt")
+    with open(list_path, "w", encoding="utf-8") as f:
+        for ts in ts_files:
+            safe = ts.replace("\\", "/").replace("'", "'\\''")
+            f.write(f"file '{safe}'\n")
+    run_ffmpeg(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+         "-c", "copy", "-bsf:a", "aac_adtstoasc",
+         "-movflags", "+faststart", out_mp4],
+        label="(이어붙이기)",
+    )
+
+
+def add_cover(video_mp4: str, thumb: str, out_mp4: str) -> None:
+    """mp4 에 썸네일을 표지(커버 아트)로 삽입한다."""
+    run_ffmpeg(
+        ["ffmpeg", "-y", "-i", video_mp4, "-i", thumb,
+         "-map", "0", "-map", "1", "-c", "copy",
+         "-disposition:v:1", "attached_pic",
+         "-movflags", "+faststart", out_mp4],
+        label="(표지)",
+    )
+
+
+def finalize(video: str, srt: str, thumb: str, out_path: str,
+             intro_sec: float = 2.5, add_intro: bool = True,
+             cover: bool = True, burn: bool = True,
+             font: str = "Malgun Gothic", font_size: int = 24) -> None:
+    video = os.path.abspath(video)
+    out_path = os.path.abspath(out_path)
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+
+    w, h, fps = get_video_props(video)
+    print(f"[정보] 영상 규격: {w}x{h}, {fps} fps", flush=True)
+
+    with tempfile.TemporaryDirectory(prefix="finalize_") as tmp:
+        ts_files = []
+
+        if add_intro and thumb:
+            print(f"[1/4] 썸네일 인트로 생성 ({intro_sec}초)...", flush=True)
+            intro_ts = os.path.join(tmp, "intro.ts")
+            make_intro(thumb, w, h, fps, intro_sec, intro_ts)
+            ts_files.append(intro_ts)
+
+        print(f"[2/4] 본편 처리{' + 자막 새겨넣기' if (burn and srt) else ''}...", flush=True)
+        main_ts = os.path.join(tmp, "main.ts")
+        if burn and srt:
+            srt_name = "sub.srt"
+            shutil.copyfile(srt, os.path.join(tmp, srt_name))
+            burn_subs(video, srt_name, w, h, fps, main_ts, tmp, font, font_size)
+        else:
+            # 자막 없이 규격만 통일해서 인코딩
+            vf = f"scale={w}:{h},setsar=1,format=yuv420p"
+            run_ffmpeg(["ffmpeg", "-y", "-i", video, "-vf", vf] +
+                       _enc_opts(fps) + [main_ts], label="(본편)")
+        ts_files.append(main_ts)
+
+        print(f"[3/4] 조각 이어붙이는 중...", flush=True)
+        if cover and thumb:
+            combined = os.path.join(tmp, "combined.mp4")
+            concat_ts(ts_files, combined, tmp)
+            print(f"[4/4] 썸네일 표지 삽입...", flush=True)
+            add_cover(combined, thumb, out_path)
+        else:
+            concat_ts(ts_files, out_path, tmp)
+
+    print(f"\n완료! 저장됨: {out_path}", flush=True)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="영상+자막+썸네일 → 완성 영상")
+    ap.add_argument("video", help="영상 파일 (mp4 등)")
+    ap.add_argument("srt", help="자막 파일 (.srt)")
+    ap.add_argument("thumb", help="썸네일 이미지 (jpg/png)")
+    ap.add_argument("-o", "--output", required=True, help="출력 mp4 경로")
+    ap.add_argument("--intro-sec", type=float, default=2.5, help="인트로 길이(초)")
+    ap.add_argument("--no-intro", dest="intro", action="store_false",
+                    help="썸네일 인트로를 붙이지 않음")
+    ap.add_argument("--no-cover", dest="cover", action="store_false",
+                    help="썸네일 표지(커버)를 넣지 않음")
+    ap.add_argument("--no-subs", dest="burn", action="store_false",
+                    help="자막을 새겨넣지 않음")
+    ap.add_argument("--font", default="Malgun Gothic", help="자막 글꼴")
+    ap.add_argument("--font-size", type=int, default=24, help="자막 크기")
+    ap.set_defaults(intro=True, cover=True, burn=True)
+    args = ap.parse_args()
+
+    # "-" 는 GUI 에서 '사용 안 함' 을 뜻하는 자리표시자.
+    srt = "" if args.srt == "-" else args.srt
+    thumb = "" if args.thumb == "-" else args.thumb
+
+    checks = [("영상", args.video, True)]
+    if args.burn:
+        checks.append(("자막", srt, True))
+    if args.intro or args.cover:
+        checks.append(("썸네일", thumb, True))
+    for label, path, required in checks:
+        if required and (not path or not os.path.isfile(path)):
+            print(f"ERROR: {label} 파일을 찾을 수 없습니다: {path}")
+            sys.exit(1)
+
+    finalize(args.video, srt, thumb, args.output,
+             intro_sec=args.intro_sec, add_intro=args.intro,
+             cover=args.cover, burn=args.burn,
+             font=args.font, font_size=args.font_size)
+
+
+if __name__ == "__main__":
+    main()

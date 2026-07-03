@@ -1,0 +1,5 @@
+pycapcut>=0.0.3
+openai-whisper
+pydub
+numpy
+yt-dlp
