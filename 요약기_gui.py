@@ -1,8 +1,10 @@
-"""GUI launcher for summarizer.py (YouTube 요약기 단독판)
+"""GUI launcher for summarizer.py (라이브 하이라이트 메이커 / Live Highlight Maker)
 
-두 개의 탭:
-  1. 영상 요약    — YouTube URL → 요약 영상 + 자막(SRT)
-  2. 완성 영상 만들기 — 영상 + 자막 + 썸네일 → 완성 mp4 (finalize.py)
+두 개의 탭 / Two tabs:
+  1. 영상 요약 / Summarize   — URL → 요약 영상 + 자막(SRT)
+  2. 완성 영상 만들기 / Finalize — 영상 + 자막 + 썸네일 → 완성 mp4 (finalize.py)
+
+한/영 전환 버튼 제공 / KO-EN language toggle button.
 """
 import os
 import queue
@@ -13,6 +15,196 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ── 내부 코드값 (언어와 무관) / internal codes (language-independent) ──────────────
+MODEL_CODES = ["tiny", "base", "small", "medium", "large"]
+QUALITY_CODES = ["360", "480", "720", "1080"]
+TRANS_CODES = ["none", "black", "white"]
+SFX_CODES = ["none", "whoosh", "swoosh", "beep", "pop", "impact"]
+
+# ── 번역 문자열 / translation strings ─────────────────────────────────────────────
+STRINGS = {
+    "ko": {
+        "win_title": "라이브 하이라이트 메이커",
+        "tab_summarize": "  영상 요약  ",
+        "tab_finalize": "  완성 영상 만들기  ",
+        "lang_button": "🌐 English",
+        # summarize tab
+        "sum_heading": "영상 요약 — 방송을 하이라이트로",
+        "url": "영상/방송 URL",
+        "outdir": "출력 폴더",
+        "browse": "찾아보기",
+        "options": "옵션",
+        "target_min": "목표 길이 (분)",
+        "model": "Whisper 모델 (자막 품질)",
+        "model_values": ["tiny (빠름)", "base", "small (권장)", "medium (정확)", "large (최고)"],
+        "language": "언어",
+        "quality": "화질",
+        "quality_values": QUALITY_CODES,
+        "expand_before": "피크 앞 확장 (초)",
+        "expand_after": "피크 뒤 확장 (초)",
+        "bridge": "같은 장면 묶기 기준 (초)",
+        "bridge_hint": "(시간차가 이보다 짧으면 한 장면으로 이어붙임)",
+        "transition": "화면 전환",
+        "transition_values": ["없음", "암전 (기본)", "화이트 플래시"],
+        "sfx": "전환 효과음",
+        "sfx_values": ["없음", "휙 (기본)", "스와이프", "삑", "팝", "임팩트"],
+        "sfx_hint": "(서로 다른 하이라이트 사이에 적용됩니다)",
+        "btn_summarize": "다운로드 & 요약",
+        "processing": "처리 중...",
+        # finalize tab
+        "video": "영상 파일",
+        "srt": "자막 파일 (.srt)",
+        "thumb": "썸네일 이미지",
+        "intro_video": "인트로 영상 (선택)",
+        "outro_video": "아웃트로 영상 (선택)",
+        "bgm": "배경음악 (선택)",
+        "outfile": "출력 파일",
+        "save_as": "저장 위치",
+        "opt_intro": "썸네일 인트로 붙이기",
+        "intro_sec": "인트로 길이 (초)",
+        "opt_cover": "썸네일 표지(커버) 삽입",
+        "font_size": "자막 크기",
+        "opt_burn": "자막 영상에 새겨넣기(하드섭)",
+        "bgm_volume": "배경음악 볼륨 (0~1)",
+        "btn_finalize": "완성 영상 만들기",
+        # file dialog titles
+        "dlg_outdir": "출력 폴더 선택",
+        "dlg_video": "영상 파일 선택",
+        "dlg_srt": "자막 파일 선택",
+        "dlg_thumb": "썸네일 이미지 선택",
+        "dlg_intro": "인트로 영상 선택",
+        "dlg_outro": "아웃트로 영상 선택",
+        "dlg_bgm": "배경음악 파일 선택",
+        "dlg_save": "완성 영상 저장",
+        # filetype labels
+        "ft_video": "동영상",
+        "ft_audio": "오디오",
+        "ft_subtitle": "자막",
+        "ft_image": "이미지",
+        "ft_mp4": "MP4 영상",
+        "ft_all": "전체",
+        # messages
+        "msg_input_error": "입력 오류",
+        "msg_need_url": "영상/방송 URL을 입력하세요.",
+        "msg_done": "완료",
+        "msg_summ_done": ("저장 완료!\n\n폴더: {folder}\n\n"
+                          "• _summary.mp4  — 요약 영상\n"
+                          "• _summary.srt  — 자막 파일 (편집 후 영상에 적용)"),
+        "msg_error": "오류",
+        "msg_error_body": "처리 중 오류가 발생했습니다.\n로그를 확인하세요.",
+        "msg_need_video": "영상 파일을 선택하세요.",
+        "msg_need_srt": "자막 파일을 선택하세요.\n(자막 새겨넣기를 끄면 자막 없이 진행됩니다.)",
+        "msg_need_thumb": "썸네일 이미지를 선택하세요.\n(인트로/표지 옵션을 모두 끄면 썸네일 없이 진행됩니다.)",
+        "msg_need_out": "출력 파일 경로를 지정하세요.",
+        "msg_final_done": "완성 영상이 저장되었습니다.\n\n{path}",
+    },
+    "en": {
+        "win_title": "Live Highlight Maker",
+        "tab_summarize": "  Summarize  ",
+        "tab_finalize": "  Finalize  ",
+        "lang_button": "🌐 한국어",
+        # summarize tab
+        "sum_heading": "Summarize — turn broadcasts into highlights",
+        "url": "Video / stream URL",
+        "outdir": "Output folder",
+        "browse": "Browse",
+        "options": "Options",
+        "target_min": "Target length (min)",
+        "model": "Whisper model (subtitle quality)",
+        "model_values": ["tiny (fast)", "base", "small (recommended)", "medium (accurate)", "large (best)"],
+        "language": "Language",
+        "quality": "Quality",
+        "quality_values": QUALITY_CODES,
+        "expand_before": "Expand before peak (s)",
+        "expand_after": "Expand after peak (s)",
+        "bridge": "Merge scenes within (s)",
+        "bridge_hint": "(clips closer than this are joined into one)",
+        "transition": "Transition",
+        "transition_values": ["None", "Black (default)", "White flash"],
+        "sfx": "Transition SFX",
+        "sfx_values": ["None", "Whoosh (default)", "Swoosh", "Beep", "Pop", "Impact"],
+        "sfx_hint": "(applied between different highlights)",
+        "btn_summarize": "Download & Summarize",
+        "processing": "Processing...",
+        # finalize tab
+        "video": "Video file",
+        "srt": "Subtitle (.srt)",
+        "thumb": "Thumbnail image",
+        "intro_video": "Intro video (optional)",
+        "outro_video": "Outro video (optional)",
+        "bgm": "Background music (optional)",
+        "outfile": "Output file",
+        "save_as": "Save as",
+        "opt_intro": "Add thumbnail intro",
+        "intro_sec": "Intro length (s)",
+        "opt_cover": "Embed thumbnail cover",
+        "font_size": "Subtitle size",
+        "opt_burn": "Burn subtitles (hardsub)",
+        "bgm_volume": "BGM volume (0-1)",
+        "btn_finalize": "Make Final Video",
+        # file dialog titles
+        "dlg_outdir": "Select output folder",
+        "dlg_video": "Select video file",
+        "dlg_srt": "Select subtitle file",
+        "dlg_thumb": "Select thumbnail image",
+        "dlg_intro": "Select intro video",
+        "dlg_outro": "Select outro video",
+        "dlg_bgm": "Select background music",
+        "dlg_save": "Save final video",
+        # filetype labels
+        "ft_video": "Video",
+        "ft_audio": "Audio",
+        "ft_subtitle": "Subtitle",
+        "ft_image": "Image",
+        "ft_mp4": "MP4 video",
+        "ft_all": "All files",
+        # messages
+        "msg_input_error": "Input error",
+        "msg_need_url": "Please enter a video / stream URL.",
+        "msg_done": "Done",
+        "msg_summ_done": ("Saved!\n\nFolder: {folder}\n\n"
+                          "- _summary.mp4  — summary video\n"
+                          "- _summary.srt  — subtitle file (edit, then apply to video)"),
+        "msg_error": "Error",
+        "msg_error_body": "An error occurred during processing.\nCheck the log.",
+        "msg_need_video": "Please select a video file.",
+        "msg_need_srt": "Please select a subtitle file.\n(Turn off subtitle burning to proceed without subtitles.)",
+        "msg_need_thumb": "Please select a thumbnail image.\n(Turn off both intro/cover options to proceed without a thumbnail.)",
+        "msg_need_out": "Please specify an output file path.",
+        "msg_final_done": "Final video saved.\n\n{path}",
+    },
+}
+
+STATE = {"lang": "ko"}
+_i18n = []  # registered widgets: (kind, obj, key)
+
+
+def _t(key):
+    return STRINGS[STATE["lang"]].get(key, key)
+
+
+def reg(kind, obj, key):
+    _i18n.append((kind, obj, key))
+    return obj
+
+
+def apply_language():
+    for kind, obj, key in _i18n:
+        if kind == "text":
+            obj.config(text=_t(key))
+        elif kind == "var":
+            obj.set(_t(key))
+        elif kind == "tab":
+            nb, tab_id = obj
+            nb.tab(tab_id, text=_t(key))
+        elif kind == "combo":
+            combo, values_key = obj
+            idx = combo.current()
+            combo["values"] = _t(values_key)
+            combo.current(idx if idx >= 0 else 0)
+        elif kind == "title":
+            obj.title(_t(key))
 
 
 def run_script(cmd, log_widget, done_cb):
@@ -65,90 +257,100 @@ def make_log(parent):
     )
 
 
+def _label(parent, key, **grid):
+    w = ttk.Label(parent, text=_t(key))
+    reg("text", w, key)
+    if grid:
+        w.grid(**grid)
+    return w
+
+
 # ── 탭 1: 영상 요약 ────────────────────────────────────────────────────────────
 
 def build_summarizer_tab(nb):
     frame = ttk.Frame(nb, padding=4)
-    nb.add(frame, text="  영상 요약  ")
+    nb.add(frame, text=_t("tab_summarize"))
+    reg("tab", (nb, frame), "tab_summarize")
     frame.columnconfigure(1, weight=1)
     frame.rowconfigure(5, weight=1)
 
     pad = {"padx": 12, "pady": 4}
 
-    # 제목
-    ttk.Label(frame, text="YouTube 영상 요약기",
-              font=("Segoe UI", 13, "bold")).grid(
-        row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(10, 8))
+    heading = ttk.Label(frame, text=_t("sum_heading"), font=("Segoe UI", 13, "bold"))
+    reg("text", heading, "sum_heading")
+    heading.grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(10, 8))
 
     # URL
-    ttk.Label(frame, text="YouTube URL").grid(row=1, column=0, sticky="w", **pad)
+    _label(frame, "url", row=1, column=0, sticky="w", **pad)
     url_var = tk.StringVar()
     ttk.Entry(frame, textvariable=url_var, width=60).grid(
         row=1, column=1, columnspan=2, sticky="ew", padx=(0, 12), pady=4)
 
     # 출력 폴더
-    ttk.Label(frame, text="출력 폴더").grid(row=2, column=0, sticky="w", **pad)
+    _label(frame, "outdir", row=2, column=0, sticky="w", **pad)
     outdir_var = tk.StringVar(value=os.path.join(SCRIPT_DIR, "output"))
     ttk.Entry(frame, textvariable=outdir_var, width=52).grid(
         row=2, column=1, sticky="ew", padx=(0, 4), pady=4)
-    ttk.Button(frame, text="찾아보기",
-               command=lambda: outdir_var.set(
-                   filedialog.askdirectory(title="출력 폴더 선택") or outdir_var.get()
-               )).grid(row=2, column=2, padx=(0, 12), pady=4)
+    browse_out = ttk.Button(
+        frame, text=_t("browse"),
+        command=lambda: outdir_var.set(
+            filedialog.askdirectory(title=_t("dlg_outdir")) or outdir_var.get()))
+    reg("text", browse_out, "browse")
+    browse_out.grid(row=2, column=2, padx=(0, 12), pady=4)
 
     # 옵션
-    opt = ttk.LabelFrame(frame, text="옵션", padding=8)
+    opt = ttk.LabelFrame(frame, text=_t("options"), padding=8)
+    reg("text", opt, "options")
     opt.grid(row=3, column=0, columnspan=3, sticky="ew", padx=12, pady=6)
     opt.columnconfigure(1, weight=1)
     opt.columnconfigure(3, weight=1)
 
     target_var = tk.StringVar(value="10")
-    model_var = tk.StringVar(value="small (권장)")
     lang_var = tk.StringVar(value="ko")
     before_var = tk.StringVar(value="5")
     after_var = tk.StringVar(value="20")
-    quality_var = tk.StringVar(value="720")
-    transition_var = tk.StringVar(value="암전 (기본)")
-    sfx_var = tk.StringVar(value="휙 (기본)")
     bridge_var = tk.StringVar(value="8")
 
-    ttk.Label(opt, text="목표 길이 (분)").grid(row=0, column=0, sticky="w", padx=(8, 4), pady=3)
+    _label(opt, "target_min", row=0, column=0, sticky="w", padx=(8, 4), pady=3)
     ttk.Entry(opt, textvariable=target_var, width=6).grid(row=0, column=1, sticky="w", pady=3)
-    ttk.Label(opt, text="Whisper 모델 (자막 품질)").grid(row=0, column=2, sticky="w", padx=(16, 4), pady=3)
-    ttk.Combobox(opt, textvariable=model_var,
-                 values=["tiny (빠름)", "base", "small (권장)", "medium (정확)", "large (최고)"],
-                 width=14, state="readonly").grid(row=0, column=3, sticky="w", pady=3)
+    _label(opt, "model", row=0, column=2, sticky="w", padx=(16, 4), pady=3)
+    model_combo = ttk.Combobox(opt, values=_t("model_values"), width=16, state="readonly")
+    model_combo.current(2)  # small
+    reg("combo", (model_combo, "model_values"), "model_values")
+    model_combo.grid(row=0, column=3, sticky="w", pady=3)
 
-    ttk.Label(opt, text="언어").grid(row=1, column=0, sticky="w", padx=(8, 4), pady=3)
+    _label(opt, "language", row=1, column=0, sticky="w", padx=(8, 4), pady=3)
     ttk.Entry(opt, textvariable=lang_var, width=6).grid(row=1, column=1, sticky="w", pady=3)
-    ttk.Label(opt, text="화질").grid(row=1, column=2, sticky="w", padx=(16, 4), pady=3)
-    ttk.Combobox(opt, textvariable=quality_var,
-                 values=["360", "480", "720", "1080"],
-                 width=6, state="readonly").grid(row=1, column=3, sticky="w", pady=3)
+    _label(opt, "quality", row=1, column=2, sticky="w", padx=(16, 4), pady=3)
+    quality_combo = ttk.Combobox(opt, values=_t("quality_values"), width=6, state="readonly")
+    quality_combo.current(2)  # 720
+    reg("combo", (quality_combo, "quality_values"), "quality_values")
+    quality_combo.grid(row=1, column=3, sticky="w", pady=3)
 
-    ttk.Label(opt, text="피크 앞 확장 (초)").grid(row=2, column=0, sticky="w", padx=(8, 4), pady=3)
+    _label(opt, "expand_before", row=2, column=0, sticky="w", padx=(8, 4), pady=3)
     ttk.Entry(opt, textvariable=before_var, width=6).grid(row=2, column=1, sticky="w", pady=3)
-    ttk.Label(opt, text="피크 뒤 확장 (초)").grid(row=2, column=2, sticky="w", padx=(16, 4), pady=3)
+    _label(opt, "expand_after", row=2, column=2, sticky="w", padx=(16, 4), pady=3)
     ttk.Entry(opt, textvariable=after_var, width=6).grid(row=2, column=3, sticky="w", pady=3)
 
-    ttk.Label(opt, text="같은 장면 묶기 기준 (초)").grid(row=3, column=0, sticky="w", padx=(8, 4), pady=3)
+    _label(opt, "bridge", row=3, column=0, sticky="w", padx=(8, 4), pady=3)
     ttk.Entry(opt, textvariable=bridge_var, width=6).grid(row=3, column=1, sticky="w", pady=3)
-    ttk.Label(opt, text="(시간차가 이보다 짧으면 한 장면으로 이어붙임)").grid(
-        row=3, column=2, columnspan=2, sticky="w", padx=(16, 4), pady=3)
+    _label(opt, "bridge_hint", row=3, column=2, columnspan=2, sticky="w", padx=(16, 4), pady=3)
 
-    ttk.Label(opt, text="화면 전환").grid(row=4, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
-    ttk.Combobox(opt, textvariable=transition_var,
-                 values=["없음", "암전 (기본)", "화이트 플래시"],
-                 width=14, state="readonly").grid(row=4, column=1, sticky="w", pady=(6, 3))
-    ttk.Label(opt, text="전환 효과음").grid(row=4, column=2, sticky="w", padx=(16, 4), pady=(6, 3))
-    ttk.Combobox(opt, textvariable=sfx_var,
-                 values=["없음", "휙 (기본)", "스와이프", "삑", "팝", "임팩트"],
-                 width=14, state="readonly").grid(row=4, column=3, sticky="w", pady=(6, 3))
-    ttk.Label(opt, text="(서로 다른 하이라이트 사이에 적용됩니다)").grid(
-        row=5, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+    _label(opt, "transition", row=4, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
+    trans_combo = ttk.Combobox(opt, values=_t("transition_values"), width=14, state="readonly")
+    trans_combo.current(1)  # black
+    reg("combo", (trans_combo, "transition_values"), "transition_values")
+    trans_combo.grid(row=4, column=1, sticky="w", pady=(6, 3))
+    _label(opt, "sfx", row=4, column=2, sticky="w", padx=(16, 4), pady=(6, 3))
+    sfx_combo = ttk.Combobox(opt, values=_t("sfx_values"), width=14, state="readonly")
+    sfx_combo.current(1)  # whoosh
+    reg("combo", (sfx_combo, "sfx_values"), "sfx_values")
+    sfx_combo.grid(row=4, column=3, sticky="w", pady=(6, 3))
+    _label(opt, "sfx_hint", row=5, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # 실행 버튼
-    btn_label_var = tk.StringVar(value="다운로드 & 요약")
+    btn_label_var = tk.StringVar(value=_t("btn_summarize"))
+    reg("var", btn_label_var, "btn_summarize")
     run_btn = ttk.Button(frame, textvariable=btn_label_var, style="Accent.TButton")
     run_btn.grid(row=4, column=0, columnspan=3, padx=12, pady=8, sticky="new")
 
@@ -159,45 +361,39 @@ def build_summarizer_tab(nb):
     def on_run():
         url = url_var.get().strip()
         if not url:
-            messagebox.showwarning("입력 오류", "YouTube URL을 입력하세요.")
+            messagebox.showwarning(_t("msg_input_error"), _t("msg_need_url"))
             return
 
         cmd = [
             sys.executable, os.path.join(SCRIPT_DIR, "summarizer.py"),
             url,
             "--target-min", target_var.get(),
-            "--model", model_var.get().split(" ")[0],
+            "--model", MODEL_CODES[max(model_combo.current(), 0)],
             "--lang", lang_var.get(),
             "--expand-before", before_var.get(),
             "--expand-after", after_var.get(),
             "--output-dir", outdir_var.get(),
-            "--max-height", quality_var.get(),
+            "--max-height", QUALITY_CODES[max(quality_combo.current(), 0)],
             "--bridge-gap", bridge_var.get(),
+            "--transition-style", TRANS_CODES[max(trans_combo.current(), 0)],
+            "--sfx", SFX_CODES[max(sfx_combo.current(), 0)],
         ]
-        trans_map = {"없음": "none", "암전 (기본)": "black", "화이트 플래시": "white"}
-        sfx_map = {"없음": "none", "휙 (기본)": "whoosh", "스와이프": "swoosh",
-                   "삑": "beep", "팝": "pop", "임팩트": "impact"}
-        cmd += ["--transition-style", trans_map.get(transition_var.get(), "black"),
-                "--sfx", sfx_map.get(sfx_var.get(), "whoosh")]
 
         log.config(state="normal")
         log.delete("1.0", tk.END)
         log.config(state="disabled")
         run_btn.config(state="disabled")
-        btn_label_var.set("처리 중...")
+        btn_label_var.set(_t("processing"))
 
         def done(ok):
             run_btn.config(state="normal")
-            btn_label_var.set("다운로드 & 요약")
+            btn_label_var.set(_t("btn_summarize"))
             if ok:
-                messagebox.showinfo("완료",
-                    f"저장 완료!\n\n"
-                    f"폴더: {outdir_var.get()}\n\n"
-                    f"• _summary.mp4  — 요약 영상\n"
-                    f"• _summary.srt  — 자막 파일 (편집 후 영상에 적용)"
-                )
+                messagebox.showinfo(
+                    _t("msg_done"),
+                    _t("msg_summ_done").format(folder=outdir_var.get()))
             else:
-                messagebox.showerror("오류", "처리 중 오류가 발생했습니다.\n로그를 확인하세요.")
+                messagebox.showerror(_t("msg_error"), _t("msg_error_body"))
 
         run_script(cmd, log, done)
 
@@ -209,26 +405,33 @@ def build_summarizer_tab(nb):
 
 def build_finalize_tab(nb):
     frame = ttk.Frame(nb)
-    nb.add(frame, text="  완성 영상 만들기  ")
+    nb.add(frame, text=_t("tab_finalize"))
+    reg("tab", (nb, frame), "tab_finalize")
     frame.columnconfigure(1, weight=1)
     frame.rowconfigure(9, weight=1)
 
     pad = {"padx": 12, "pady": 4}
-    vid_types = [("동영상", "*.mp4 *.mov *.mkv *.avi *.webm"), ("전체", "*.*")]
-    audio_types = [("오디오", "*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus"),
-                   ("전체", "*.*")]
 
-    def browse_row(row, label, var, title, filetypes, clearable=False):
-        ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", **pad)
+    def vid_types():
+        return [(_t("ft_video"), "*.mp4 *.mov *.mkv *.avi *.webm"), (_t("ft_all"), "*.*")]
+
+    def audio_types():
+        return [(_t("ft_audio"), "*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus"),
+                (_t("ft_all"), "*.*")]
+
+    def browse_row(row, label_key, var, dlg_key, filetypes_fn, clearable=False):
+        _label(frame, label_key, row=row, column=0, sticky="w", **pad)
         ttk.Entry(frame, textvariable=var, width=52).grid(
             row=row, column=1, sticky="ew", padx=(0, 4), pady=4)
         btns = ttk.Frame(frame)
         btns.grid(row=row, column=2, padx=(0, 12), pady=4, sticky="w")
-        ttk.Button(btns, text="찾아보기",
-                   command=lambda: var.set(
-                       filedialog.askopenfilename(title=title, filetypes=filetypes)
-                       or var.get()
-                   )).pack(side="left")
+        b = ttk.Button(btns, text=_t("browse"),
+                       command=lambda: var.set(
+                           filedialog.askopenfilename(title=_t(dlg_key),
+                                                      filetypes=filetypes_fn())
+                           or var.get()))
+        reg("text", b, "browse")
+        b.pack(side="left")
         if clearable:
             ttk.Button(btns, text="✕", width=3,
                        command=lambda: var.set("")).pack(side="left", padx=(4, 0))
@@ -241,17 +444,14 @@ def build_finalize_tab(nb):
     bgm_var = tk.StringVar()
     out_var = tk.StringVar()
 
-    browse_row(0, "영상 파일", video_var, "영상 파일 선택", vid_types)
-    browse_row(1, "자막 파일 (.srt)", srt_var, "자막 파일 선택",
-               [("자막", "*.srt *.ass"), ("전체", "*.*")])
-    browse_row(2, "썸네일 이미지", thumb_var, "썸네일 이미지 선택",
-               [("이미지", "*.jpg *.jpeg *.png *.webp *.bmp"), ("전체", "*.*")])
-    browse_row(3, "인트로 영상 (선택)", intro_video_var, "인트로 영상 선택",
-               vid_types, clearable=True)
-    browse_row(4, "아웃트로 영상 (선택)", outro_video_var, "아웃트로 영상 선택",
-               vid_types, clearable=True)
-    browse_row(5, "배경음악 (선택)", bgm_var, "배경음악 파일 선택",
-               audio_types, clearable=True)
+    browse_row(0, "video", video_var, "dlg_video", vid_types)
+    browse_row(1, "srt", srt_var, "dlg_srt",
+               lambda: [(_t("ft_subtitle"), "*.srt *.ass"), (_t("ft_all"), "*.*")])
+    browse_row(2, "thumb", thumb_var, "dlg_thumb",
+               lambda: [(_t("ft_image"), "*.jpg *.jpeg *.png *.webp *.bmp"), (_t("ft_all"), "*.*")])
+    browse_row(3, "intro_video", intro_video_var, "dlg_intro", vid_types, clearable=True)
+    browse_row(4, "outro_video", outro_video_var, "dlg_outro", vid_types, clearable=True)
+    browse_row(5, "bgm", bgm_var, "dlg_bgm", audio_types, clearable=True)
 
     # 영상 선택 시 같은 폴더/이름의 srt·출력경로 자동 추정
     def autofill(*_):
@@ -263,22 +463,25 @@ def build_finalize_tab(nb):
         if not srt_var.get().strip() and os.path.isfile(cand_srt):
             srt_var.set(cand_srt)
         if not out_var.get().strip():
-            out_var.set(base + "_완성.mp4")
+            out_var.set(base + "_final.mp4")
     video_var.trace_add("write", autofill)
 
     # 출력 파일
-    ttk.Label(frame, text="출력 파일").grid(row=6, column=0, sticky="w", **pad)
+    _label(frame, "outfile", row=6, column=0, sticky="w", **pad)
     ttk.Entry(frame, textvariable=out_var, width=52).grid(
         row=6, column=1, sticky="ew", padx=(0, 4), pady=4)
-    ttk.Button(frame, text="저장 위치",
-               command=lambda: out_var.set(
-                   filedialog.asksaveasfilename(
-                       title="완성 영상 저장", defaultextension=".mp4",
-                       filetypes=[("MP4 영상", "*.mp4")]) or out_var.get()
-               )).grid(row=6, column=2, padx=(0, 12), pady=4)
+    save_btn = ttk.Button(
+        frame, text=_t("save_as"),
+        command=lambda: out_var.set(
+            filedialog.asksaveasfilename(
+                title=_t("dlg_save"), defaultextension=".mp4",
+                filetypes=[(_t("ft_mp4"), "*.mp4")]) or out_var.get()))
+    reg("text", save_btn, "save_as")
+    save_btn.grid(row=6, column=2, padx=(0, 12), pady=4)
 
     # 옵션
-    opt = ttk.LabelFrame(frame, text="옵션", padding=8)
+    opt = ttk.LabelFrame(frame, text=_t("options"), padding=8)
+    reg("text", opt, "options")
     opt.grid(row=7, column=0, columnspan=3, sticky="ew", padx=12, pady=6)
     opt.columnconfigure(1, weight=1)
     opt.columnconfigure(3, weight=1)
@@ -290,23 +493,27 @@ def build_finalize_tab(nb):
     font_size_var = tk.StringVar(value="24")
     bgm_volume_var = tk.StringVar(value="0.25")
 
-    ttk.Checkbutton(opt, text="썸네일 인트로 붙이기",
-                    variable=intro_var).grid(row=0, column=0, sticky="w", padx=8, pady=3)
-    ttk.Label(opt, text="인트로 길이 (초)").grid(row=0, column=2, sticky="w", padx=(16, 4), pady=3)
+    chk_intro = ttk.Checkbutton(opt, text=_t("opt_intro"), variable=intro_var)
+    reg("text", chk_intro, "opt_intro")
+    chk_intro.grid(row=0, column=0, sticky="w", padx=8, pady=3)
+    _label(opt, "intro_sec", row=0, column=2, sticky="w", padx=(16, 4), pady=3)
     ttk.Entry(opt, textvariable=intro_sec_var, width=6).grid(row=0, column=3, sticky="w", pady=3)
 
-    ttk.Checkbutton(opt, text="썸네일 표지(커버) 삽입",
-                    variable=cover_var).grid(row=1, column=0, sticky="w", padx=8, pady=3)
-    ttk.Label(opt, text="자막 크기").grid(row=1, column=2, sticky="w", padx=(16, 4), pady=3)
+    chk_cover = ttk.Checkbutton(opt, text=_t("opt_cover"), variable=cover_var)
+    reg("text", chk_cover, "opt_cover")
+    chk_cover.grid(row=1, column=0, sticky="w", padx=8, pady=3)
+    _label(opt, "font_size", row=1, column=2, sticky="w", padx=(16, 4), pady=3)
     ttk.Entry(opt, textvariable=font_size_var, width=6).grid(row=1, column=3, sticky="w", pady=3)
 
-    ttk.Checkbutton(opt, text="자막 영상에 새겨넣기(하드섭)",
-                    variable=burn_var).grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=3)
-    ttk.Label(opt, text="배경음악 볼륨 (0~1)").grid(row=2, column=2, sticky="w", padx=(16, 4), pady=3)
+    chk_burn = ttk.Checkbutton(opt, text=_t("opt_burn"), variable=burn_var)
+    reg("text", chk_burn, "opt_burn")
+    chk_burn.grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=3)
+    _label(opt, "bgm_volume", row=2, column=2, sticky="w", padx=(16, 4), pady=3)
     ttk.Entry(opt, textvariable=bgm_volume_var, width=6).grid(row=2, column=3, sticky="w", pady=3)
 
     # 실행 버튼
-    btn_label_var = tk.StringVar(value="완성 영상 만들기")
+    btn_label_var = tk.StringVar(value=_t("btn_finalize"))
+    reg("var", btn_label_var, "btn_finalize")
     run_btn = ttk.Button(frame, textvariable=btn_label_var, style="Accent.TButton")
     run_btn.grid(row=8, column=0, columnspan=3, padx=12, pady=8, sticky="ew")
 
@@ -320,16 +527,16 @@ def build_finalize_tab(nb):
         thumb = thumb_var.get().strip()
         out = out_var.get().strip()
         if not video:
-            messagebox.showwarning("입력 오류", "영상 파일을 선택하세요.")
+            messagebox.showwarning(_t("msg_input_error"), _t("msg_need_video"))
             return
         if burn_var.get() and not srt:
-            messagebox.showwarning("입력 오류", "자막 파일을 선택하세요.\n(자막 새겨넣기를 끄면 자막 없이 진행됩니다.)")
+            messagebox.showwarning(_t("msg_input_error"), _t("msg_need_srt"))
             return
         if (intro_var.get() or cover_var.get()) and not thumb:
-            messagebox.showwarning("입력 오류", "썸네일 이미지를 선택하세요.\n(인트로/표지 옵션을 모두 끄면 썸네일 없이 진행됩니다.)")
+            messagebox.showwarning(_t("msg_input_error"), _t("msg_need_thumb"))
             return
         if not out:
-            messagebox.showwarning("입력 오류", "출력 파일 경로를 지정하세요.")
+            messagebox.showwarning(_t("msg_input_error"), _t("msg_need_out"))
             return
 
         cmd = [
@@ -357,15 +564,16 @@ def build_finalize_tab(nb):
         log.delete("1.0", tk.END)
         log.config(state="disabled")
         run_btn.config(state="disabled")
-        btn_label_var.set("처리 중...")
+        btn_label_var.set(_t("processing"))
 
         def done(ok):
             run_btn.config(state="normal")
-            btn_label_var.set("완성 영상 만들기")
+            btn_label_var.set(_t("btn_finalize"))
             if ok:
-                messagebox.showinfo("완료", f"완성 영상이 저장되었습니다.\n\n{out}")
+                messagebox.showinfo(_t("msg_done"),
+                                    _t("msg_final_done").format(path=out))
             else:
-                messagebox.showerror("오류", "처리 중 오류가 발생했습니다.\n로그를 확인하세요.")
+                messagebox.showerror(_t("msg_error"), _t("msg_error_body"))
 
         run_script(cmd, log, done)
 
@@ -377,9 +585,10 @@ def build_finalize_tab(nb):
 
 def main():
     root = tk.Tk()
-    root.title("YouTube 영상 요약기")
-    root.geometry("720x640")
-    root.minsize(640, 560)
+    root.title(_t("win_title"))
+    reg("title", root, "win_title")
+    root.geometry("720x660")
+    root.minsize(640, 580)
 
     style = ttk.Style(root)
     try:
@@ -407,7 +616,22 @@ def main():
               foreground=[("disabled", "#888888")])
     style.configure("TButton", background="#3c3c3c", foreground="#e0e0e0")
     style.map("TButton", background=[("active", "#505050")])
+    style.configure("Lang.TButton", background="#3c3c3c", foreground="#e0e0e0",
+                    font=("Segoe UI", 9))
     root.configure(bg="#2d2d2d")
+
+    # 상단 바: 언어 전환 버튼 / top bar: language toggle
+    top = ttk.Frame(root)
+    top.pack(fill="x")
+
+    def toggle_lang():
+        STATE["lang"] = "en" if STATE["lang"] == "ko" else "ko"
+        lang_btn.config(text=_t("lang_button"))
+        apply_language()
+
+    lang_btn = ttk.Button(top, text=_t("lang_button"), style="Lang.TButton",
+                          command=toggle_lang)
+    lang_btn.pack(side="right", padx=8, pady=(6, 0))
 
     nb = ttk.Notebook(root)
     nb.pack(fill="both", expand=True)

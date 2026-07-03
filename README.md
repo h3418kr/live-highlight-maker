@@ -1,5 +1,7 @@
 <div align="center">
 
+**한국어** · [English](README.en.md)
+
 <img src="assets/hero.svg" alt="라이브 방송을 하이라이트 영상으로" width="100%">
 
 # 🔥 라이브 하이라이트 메이커 (무설치판)
