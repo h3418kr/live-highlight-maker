@@ -211,31 +211,42 @@ def build_finalize_tab(nb):
     frame = ttk.Frame(nb)
     nb.add(frame, text="  완성 영상 만들기  ")
     frame.columnconfigure(1, weight=1)
-    frame.rowconfigure(6, weight=1)
+    frame.rowconfigure(8, weight=1)
 
     pad = {"padx": 12, "pady": 4}
+    vid_types = [("동영상", "*.mp4 *.mov *.mkv *.avi *.webm"), ("전체", "*.*")]
 
-    def browse_row(row, label, var, title, filetypes):
+    def browse_row(row, label, var, title, filetypes, clearable=False):
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", **pad)
         ttk.Entry(frame, textvariable=var, width=52).grid(
             row=row, column=1, sticky="ew", padx=(0, 4), pady=4)
-        ttk.Button(frame, text="찾아보기",
+        btns = ttk.Frame(frame)
+        btns.grid(row=row, column=2, padx=(0, 12), pady=4, sticky="w")
+        ttk.Button(btns, text="찾아보기",
                    command=lambda: var.set(
                        filedialog.askopenfilename(title=title, filetypes=filetypes)
                        or var.get()
-                   )).grid(row=row, column=2, padx=(0, 12), pady=4)
+                   )).pack(side="left")
+        if clearable:
+            ttk.Button(btns, text="✕", width=3,
+                       command=lambda: var.set("")).pack(side="left", padx=(4, 0))
 
     video_var = tk.StringVar()
     srt_var = tk.StringVar()
     thumb_var = tk.StringVar()
+    intro_video_var = tk.StringVar()
+    outro_video_var = tk.StringVar()
     out_var = tk.StringVar()
 
-    browse_row(0, "영상 파일", video_var, "영상 파일 선택",
-               [("동영상", "*.mp4 *.mov *.mkv *.avi *.webm"), ("전체", "*.*")])
+    browse_row(0, "영상 파일", video_var, "영상 파일 선택", vid_types)
     browse_row(1, "자막 파일 (.srt)", srt_var, "자막 파일 선택",
                [("자막", "*.srt *.ass"), ("전체", "*.*")])
     browse_row(2, "썸네일 이미지", thumb_var, "썸네일 이미지 선택",
                [("이미지", "*.jpg *.jpeg *.png *.webp *.bmp"), ("전체", "*.*")])
+    browse_row(3, "인트로 영상 (선택)", intro_video_var, "인트로 영상 선택",
+               vid_types, clearable=True)
+    browse_row(4, "아웃트로 영상 (선택)", outro_video_var, "아웃트로 영상 선택",
+               vid_types, clearable=True)
 
     # 영상 선택 시 같은 폴더/이름의 srt·출력경로 자동 추정
     def autofill(*_):
@@ -251,19 +262,19 @@ def build_finalize_tab(nb):
     video_var.trace_add("write", autofill)
 
     # 출력 파일
-    ttk.Label(frame, text="출력 파일").grid(row=3, column=0, sticky="w", **pad)
+    ttk.Label(frame, text="출력 파일").grid(row=5, column=0, sticky="w", **pad)
     ttk.Entry(frame, textvariable=out_var, width=52).grid(
-        row=3, column=1, sticky="ew", padx=(0, 4), pady=4)
+        row=5, column=1, sticky="ew", padx=(0, 4), pady=4)
     ttk.Button(frame, text="저장 위치",
                command=lambda: out_var.set(
                    filedialog.asksaveasfilename(
                        title="완성 영상 저장", defaultextension=".mp4",
                        filetypes=[("MP4 영상", "*.mp4")]) or out_var.get()
-               )).grid(row=3, column=2, padx=(0, 12), pady=4)
+               )).grid(row=5, column=2, padx=(0, 12), pady=4)
 
     # 옵션
     opt = ttk.LabelFrame(frame, text="옵션", padding=8)
-    opt.grid(row=4, column=0, columnspan=3, sticky="ew", padx=12, pady=6)
+    opt.grid(row=6, column=0, columnspan=3, sticky="ew", padx=12, pady=6)
     opt.columnconfigure(1, weight=1)
     opt.columnconfigure(3, weight=1)
 
@@ -289,11 +300,11 @@ def build_finalize_tab(nb):
     # 실행 버튼
     btn_label_var = tk.StringVar(value="완성 영상 만들기")
     run_btn = ttk.Button(frame, textvariable=btn_label_var, style="Accent.TButton")
-    run_btn.grid(row=5, column=0, columnspan=3, padx=12, pady=8, sticky="ew")
+    run_btn.grid(row=7, column=0, columnspan=3, padx=12, pady=8, sticky="ew")
 
     # 로그
     log = make_log(frame)
-    log.grid(row=6, column=0, columnspan=3, sticky="nsew", padx=12, pady=(0, 12))
+    log.grid(row=8, column=0, columnspan=3, sticky="nsew", padx=12, pady=(0, 12))
 
     def on_run():
         video = video_var.get().strip()
@@ -326,6 +337,10 @@ def build_finalize_tab(nb):
             cmd += ["--no-cover"]
         if not burn_var.get():
             cmd += ["--no-subs"]
+        if intro_video_var.get().strip():
+            cmd += ["--intro-video", intro_video_var.get().strip()]
+        if outro_video_var.get().strip():
+            cmd += ["--outro-video", outro_video_var.get().strip()]
 
         log.config(state="normal")
         log.delete("1.0", tk.END)

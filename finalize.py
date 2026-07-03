@@ -1,7 +1,10 @@
-"""완성 영상 만들기 - 영상 + 자막(SRT) + 썸네일을 하나의 완성 mp4로 합친다.
+"""완성 영상 만들기 - 영상 + 자막(SRT) + 썸네일 + 인트로/아웃트로 영상을
+하나의 완성 mp4로 합친다.
 
   - 자막: 영상 화면에 새겨넣기(하드섭). 어디서 재생해도 자막이 보인다.
   - 썸네일: (1) 영상 맨 앞에 2~3초 인트로로 붙이고, (2) mp4 표지(커버)로도 삽입.
+  - 인트로/아웃트로 영상: 본편 앞/뒤에 별도의 영상 클립을 붙인다.
+    해상도/비율이 달라도 본편 규격에 맞춰 자동 변환해 이어붙인다.
 
 ffmpeg 만 사용하며, 배포 폴더 옆의 ffmpeg/bin 을 자동으로 PATH 에 추가한다.
 """
@@ -98,6 +101,38 @@ def make_intro(thumb: str, w: int, h: int, fps: str, seconds: float,
     run_ffmpeg(cmd, label="(인트로)")
 
 
+def has_audio(path: str) -> bool:
+    """영상에 오디오 스트림이 있는지 ffprobe 로 확인."""
+    try:
+        out = run(["ffprobe", "-v", "quiet", "-select_streams", "a:0",
+                   "-show_entries", "stream=index", "-of", "csv=p=0", path])
+        return bool(out.strip())
+    except Exception:
+        return False
+
+
+def prep_clip(clip: str, w: int, h: int, fps: str, out_ts: str,
+              label: str = "(클립)") -> None:
+    """인트로/아웃트로 영상을 본편 규격(WxH·fps·44.1k 스테레오)에 맞춰 TS 로 변환.
+
+    해상도/비율이 달라도 레터박스(pad)로 맞추고, 오디오가 없으면 무음을 넣어
+    본편과 동일한 스트림 구성을 만들어야 재인코딩 없이 이어붙일 수 있다.
+    """
+    clip = os.path.abspath(clip)
+    vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+          f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p")
+    if has_audio(clip):
+        cmd = ["ffmpeg", "-y", "-i", clip,
+               "-filter_complex", f"[0:v]{vf}[v]",
+               "-map", "[v]", "-map", "0:a:0"] + _enc_opts(fps) + [out_ts]
+    else:
+        cmd = ["ffmpeg", "-y", "-i", clip,
+               "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+               "-filter_complex", f"[0:v]{vf}[v]",
+               "-map", "[v]", "-map", "1:a", "-shortest"] + _enc_opts(fps) + [out_ts]
+    run_ffmpeg(cmd, label=label)
+
+
 def burn_subs(video: str, srt_name: str, w: int, h: int, fps: str,
               out_ts: str, cwd: str, font: str, font_size: int) -> None:
     """본편 영상에 자막을 하드섭으로 새겨넣는다.
@@ -143,7 +178,8 @@ def add_cover(video_mp4: str, thumb: str, out_mp4: str) -> None:
 def finalize(video: str, srt: str, thumb: str, out_path: str,
              intro_sec: float = 2.5, add_intro: bool = True,
              cover: bool = True, burn: bool = True,
-             font: str = "Malgun Gothic", font_size: int = 24) -> None:
+             font: str = "Malgun Gothic", font_size: int = 24,
+             intro_video: str = "", outro_video: str = "") -> None:
     video = os.path.abspath(video)
     out_path = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -154,13 +190,22 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
     with tempfile.TemporaryDirectory(prefix="finalize_") as tmp:
         ts_files = []
 
+        # 1) 인트로 영상 (있으면 맨 앞)
+        if intro_video:
+            print(f"[인트로 영상] 규격 맞추는 중...", flush=True)
+            iv_ts = os.path.join(tmp, "intro_video.ts")
+            prep_clip(intro_video, w, h, fps, iv_ts, label="(인트로 영상)")
+            ts_files.append(iv_ts)
+
+        # 2) 썸네일 인트로
         if add_intro and thumb:
-            print(f"[1/4] 썸네일 인트로 생성 ({intro_sec}초)...", flush=True)
+            print(f"[썸네일 인트로] 생성 ({intro_sec}초)...", flush=True)
             intro_ts = os.path.join(tmp, "intro.ts")
             make_intro(thumb, w, h, fps, intro_sec, intro_ts)
             ts_files.append(intro_ts)
 
-        print(f"[2/4] 본편 처리{' + 자막 새겨넣기' if (burn and srt) else ''}...", flush=True)
+        # 3) 본편
+        print(f"[본편] 처리{' + 자막 새겨넣기' if (burn and srt) else ''}...", flush=True)
         main_ts = os.path.join(tmp, "main.ts")
         if burn and srt:
             srt_name = "sub.srt"
@@ -173,11 +218,19 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
                        _enc_opts(fps) + [main_ts], label="(본편)")
         ts_files.append(main_ts)
 
-        print(f"[3/4] 조각 이어붙이는 중...", flush=True)
+        # 4) 아웃트로 영상 (있으면 맨 뒤)
+        if outro_video:
+            print(f"[아웃트로 영상] 규격 맞추는 중...", flush=True)
+            ov_ts = os.path.join(tmp, "outro_video.ts")
+            prep_clip(outro_video, w, h, fps, ov_ts, label="(아웃트로 영상)")
+            ts_files.append(ov_ts)
+
+        # 5) 이어붙이기 (+표지)
+        print(f"[이어붙이기] 조각 합치는 중...", flush=True)
         if cover and thumb:
             combined = os.path.join(tmp, "combined.mp4")
             concat_ts(ts_files, combined, tmp)
-            print(f"[4/4] 썸네일 표지 삽입...", flush=True)
+            print(f"[표지] 썸네일 커버 삽입...", flush=True)
             add_cover(combined, thumb, out_path)
         else:
             concat_ts(ts_files, out_path, tmp)
@@ -192,6 +245,8 @@ def main():
     ap.add_argument("thumb", help="썸네일 이미지 (jpg/png)")
     ap.add_argument("-o", "--output", required=True, help="출력 mp4 경로")
     ap.add_argument("--intro-sec", type=float, default=2.5, help="인트로 길이(초)")
+    ap.add_argument("--intro-video", default="", help="맨 앞에 붙일 인트로 영상 파일")
+    ap.add_argument("--outro-video", default="", help="맨 뒤에 붙일 아웃트로 영상 파일")
     ap.add_argument("--no-intro", dest="intro", action="store_false",
                     help="썸네일 인트로를 붙이지 않음")
     ap.add_argument("--no-cover", dest="cover", action="store_false",
@@ -206,12 +261,18 @@ def main():
     # "-" 는 GUI 에서 '사용 안 함' 을 뜻하는 자리표시자.
     srt = "" if args.srt == "-" else args.srt
     thumb = "" if args.thumb == "-" else args.thumb
+    intro_video = "" if args.intro_video in ("", "-") else args.intro_video
+    outro_video = "" if args.outro_video in ("", "-") else args.outro_video
 
     checks = [("영상", args.video, True)]
     if args.burn:
         checks.append(("자막", srt, True))
     if args.intro or args.cover:
         checks.append(("썸네일", thumb, True))
+    if intro_video:
+        checks.append(("인트로 영상", intro_video, True))
+    if outro_video:
+        checks.append(("아웃트로 영상", outro_video, True))
     for label, path, required in checks:
         if required and (not path or not os.path.isfile(path)):
             print(f"ERROR: {label} 파일을 찾을 수 없습니다: {path}")
@@ -220,7 +281,8 @@ def main():
     finalize(args.video, srt, thumb, args.output,
              intro_sec=args.intro_sec, add_intro=args.intro,
              cover=args.cover, burn=args.burn,
-             font=args.font, font_size=args.font_size)
+             font=args.font, font_size=args.font_size,
+             intro_video=intro_video, outro_video=outro_video)
 
 
 if __name__ == "__main__":
