@@ -96,4 +96,4 @@ python finalize.py 영상.mp4 자막.srt 썸네일.jpg -o 완성.mp4 --intro-sec
 
 ## 📝 라이선스
 
-[MIT License](LICENSE) © 2026 Seung Kyu Hwang
+[MIT License](LICENSE) © 2026 SKH
