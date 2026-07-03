@@ -1,6 +1,6 @@
-# 🎬 YouTube 요약기 & 영상 편집 도구
+# 🎬 YouTube 영상 요약기 (무설치판)
 
-YouTube 영상을 자동으로 **요약**하고, **자막을 생성·편집**하며, 썸네일까지 합쳐 **완성 영상**을 만들어 주는 한국어 영상 제작 도구 모음입니다. Whisper 음성 인식과 ffmpeg를 기반으로 하며, 파이썬을 모르는 사람도 쓸 수 있는 **그래픽 UI(GUI)** 를 제공합니다.
+YouTube 영상을 자동으로 **요약**하고, **자막(SRT)을 생성**하며, 썸네일·자막을 합쳐 **완성 영상**까지 만들어 주는 한국어 영상 제작 도구입니다. Whisper 음성 인식과 ffmpeg를 기반으로 하며, 파이썬을 몰라도 쓸 수 있는 **그래픽 UI(GUI)** 를 제공합니다.
 
 > 게임 방송(디아블로2 등) 하이라이트 편집을 염두에 두고 만들었지만, 어떤 영상에도 사용할 수 있습니다.
 
@@ -8,52 +8,42 @@ YouTube 영상을 자동으로 **요약**하고, **자막을 생성·편집**하
 
 ## ✨ 주요 기능
 
-이 도구는 세 가지 기능을 탭으로 묶은 GUI로 제공됩니다.
+GUI(`요약기_gui.py`)는 두 개의 탭으로 구성됩니다.
 
-### 1. YouTube 요약기 (`summarizer.py`)
+### 1. 영상 요약
 - YouTube URL만 넣으면 영상을 내려받아 **오디오 에너지가 높은 하이라이트 구간**을 자동으로 찾습니다.
 - 목표 길이(예: 10분)에 맞춰 하이라이트를 골라 **요약 영상**을 만듭니다.
 - Whisper로 **자막(SRT)** 을 자동 생성합니다.
 - 서로 다른 하이라이트 사이에 **장면 전환 효과 + 효과음**을 넣을 수 있습니다.
-- 결과물: `_summary.mp4`(요약 영상), `_summary.srt`(자막)
+- 결과물: `제목_summary.mp4`(요약 영상), `제목_summary.srt`(자막)
 
-### 2. 완성 영상 만들기 (`finalize.py`)
+### 2. 완성 영상 만들기
 - **영상 + 자막(SRT) + 썸네일** 3개를 골라 하나의 완성 mp4로 합칩니다.
 - 자막을 화면에 **새겨넣기(하드섭)** → 어디서 재생해도 자막이 보입니다.
 - 썸네일을 **① 인트로 클립**으로 앞에 붙이고, **② mp4 표지(커버 아트)** 로도 삽입합니다.
 - 인트로 길이·자막 크기·각 옵션 on/off 조절 가능.
 
-### 3. CapCut 자동 편집기 (`auto_editor.py`)
-- **무음 구간 자동 컷** — 말이 없는 부분을 잘라 영상 템포를 살립니다.
-- **버벅거림(반복 단어·필러) 자동 컷**.
-- Whisper 기반 **자막 자동 생성**.
-- [pycapcut](https://pypi.org/project/pycapcut/)으로 **CapCut 드래프트(초안) 파일**을 만들어, CapCut에서 이어서 편집할 수 있습니다.
-
 ---
 
-## 🖥️ 화면 구성
+## 📥 두 가지 사용 방법
 
-| GUI | 파일 | 탭 |
-|-----|------|----|
-| 통합 도구 | `gui.py` | CapCut 자동 편집기 · YouTube 요약기 · 완성 영상 만들기 |
-| 요약기 단독판 | `요약기_gui.py` | 영상 요약 · 완성 영상 만들기 |
+### A) 무설치 배포판 (추천 — 파이썬 설치 불필요)
+파이썬·ffmpeg·Whisper 모델까지 통째로 담은 **무설치 zip(약 1GB)** 을 받아 압축을 풀고 `실행.bat` 을 더블클릭하면 바로 실행됩니다.
 
----
+> 무설치 zip은 용량이 커서 이 저장소가 아닌 **[GitHub Releases](../../releases)** 에서 내려받습니다. (자세한 사용법은 `사용설명서.txt` 참고)
 
-## 📦 설치
+### B) 소스로 직접 실행 (파이썬 사용자)
+```bash
+pip install -r requirements.txt
+python 요약기_gui.py        # 또는 요약기_실행.bat 더블클릭
+```
 
-### 준비물
+#### 준비물
 - **Python 3.9+**
 - **ffmpeg** (PATH에 등록되어 있거나, 스크립트 폴더 옆 `ffmpeg/bin/ffmpeg.exe` 로 배치)
 
-### 파이썬 패키지 설치
-```bash
-pip install -r requirements.txt
-```
-
 `requirements.txt`
 ```
-pycapcut>=0.0.3
 openai-whisper
 pydub
 numpy
@@ -62,16 +52,7 @@ yt-dlp
 
 ---
 
-## 🚀 사용법
-
-### GUI로 실행 (추천)
-```bash
-python gui.py          # 통합 도구 (3개 탭)
-python 요약기_gui.py    # 요약기 단독판 (2개 탭)
-```
-Windows에서는 함께 들어있는 `실행.bat` 을 더블클릭해도 됩니다.
-
-### 명령줄(CLI)로 실행
+## 🚀 명령줄(CLI)로 실행
 
 **YouTube 요약**
 ```bash
@@ -84,12 +65,6 @@ python summarizer.py "https://youtu.be/XXXX" --target-min 10 --model small --lan
 python finalize.py 영상.mp4 자막.srt 썸네일.jpg -o 완성.mp4 --intro-sec 2.5 --font-size 24
 ```
 옵션: `--no-intro`(인트로 생략) · `--no-cover`(표지 생략) · `--no-subs`(자막 새겨넣기 생략) · `--font`(자막 글꼴)
-
-**CapCut 자동 편집**
-```bash
-python auto_editor.py 영상.mp4 CapCut초안폴더 --model base --lang ko
-```
-옵션: `--silence-db`(무음 판정 dB) · `--min-silence-ms`(최소 무음 길이) · `--padding-ms`(컷 여백) · `--no-stutter`(버벅임 컷 끄기)
 
 ---
 
@@ -105,19 +80,17 @@ python auto_editor.py 영상.mp4 CapCut초안폴더 --model base --lang ko
 ## 📁 저장소 구성
 
 ```
-├── gui.py            # 통합 GUI (3개 탭)
-├── 요약기_gui.py      # 요약기 단독 GUI (2개 탭)
+├── 요약기_gui.py     # GUI (영상 요약 · 완성 영상 만들기 2개 탭)
 ├── summarizer.py     # YouTube 요약 엔진
 ├── finalize.py       # 영상+자막+썸네일 합치기
-├── auto_editor.py    # CapCut 자동 편집 + 자막
-├── 무설치_빌드.py      # 포터블(무설치) 배포본 빌드 스크립트
+├── 요약기_실행.bat    # Windows 실행 런처 (시스템 파이썬)
+├── 사용설명서.txt     # 무설치판 사용 설명서
 ├── requirements.txt
-├── 실행.bat           # Windows 실행 런처
 ├── LICENSE
 └── README.md
 ```
 
-> 참고: `배포/`, `배포_무설치/`, `배포_요약기_무설치/` 같은 **무설치 배포 번들(각 ~1.8GB, Python·ffmpeg·모델 포함)** 은 용량이 커서 저장소에 포함하지 않습니다(`.gitignore` 처리). 배포본은 `무설치_빌드.py` 로 생성합니다.
+> 참고: 무설치 배포 번들(약 1.8GB — Python·ffmpeg·Whisper 모델 포함)과 그 zip은 용량이 커서 저장소에 포함하지 않습니다(`.gitignore` 처리). 배포본은 GitHub Releases 로 별도 첨부합니다.
 
 ---
 
