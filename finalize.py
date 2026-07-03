@@ -5,6 +5,7 @@
   - 썸네일: (1) 영상 맨 앞에 2~3초 인트로로 붙이고, (2) mp4 표지(커버)로도 삽입.
   - 인트로/아웃트로 영상: 본편 앞/뒤에 별도의 영상 클립을 붙인다.
     해상도/비율이 달라도 본편 규격에 맞춰 자동 변환해 이어붙인다.
+  - 배경음악(BGM): 완성 영상 전체 길이에 맞춰 반복/컷 하여 기존 오디오와 섞는다.
 
 ffmpeg 만 사용하며, 배포 폴더 옆의 ffmpeg/bin 을 자동으로 PATH 에 추가한다.
 """
@@ -164,6 +165,26 @@ def concat_ts(ts_files, out_mp4: str, tmpdir: str) -> None:
     )
 
 
+def add_bgm(video_mp4: str, bgm: str, out_mp4: str, volume: float = 0.25) -> None:
+    """영상 전체 길이에 맞춰 배경음악을 반복/컷 하여 기존 오디오와 섞는다.
+
+    -stream_loop -1 로 BGM 을 무한 반복시키고, amix 의 duration=first 로 영상
+    길이에 정확히 맞춘다(짧으면 반복 채움, 길면 잘라냄). normalize=0 으로 원본
+    말소리 볼륨은 그대로 두고 BGM 만 낮추며, alimiter 로 합산 시 클리핑을 막는다.
+    """
+    bgm = os.path.abspath(bgm)
+    fc = (f"[1:a]volume={volume}[bg];"
+          f"[0:a][bg]amix=inputs=2:duration=first:normalize=0[mix];"
+          f"[mix]alimiter=limit=0.95[a]")
+    run_ffmpeg(
+        ["ffmpeg", "-y", "-i", video_mp4, "-stream_loop", "-1", "-i", bgm,
+         "-filter_complex", fc, "-map", "0:v", "-map", "[a]",
+         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+         "-movflags", "+faststart", out_mp4],
+        label="(배경음악)",
+    )
+
+
 def add_cover(video_mp4: str, thumb: str, out_mp4: str) -> None:
     """mp4 에 썸네일을 표지(커버 아트)로 삽입한다."""
     run_ffmpeg(
@@ -179,7 +200,8 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
              intro_sec: float = 2.5, add_intro: bool = True,
              cover: bool = True, burn: bool = True,
              font: str = "Malgun Gothic", font_size: int = 24,
-             intro_video: str = "", outro_video: str = "") -> None:
+             intro_video: str = "", outro_video: str = "",
+             bgm: str = "", bgm_volume: float = 0.25) -> None:
     video = os.path.abspath(video)
     out_path = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -225,15 +247,25 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
             prep_clip(outro_video, w, h, fps, ov_ts, label="(아웃트로 영상)")
             ts_files.append(ov_ts)
 
-        # 5) 이어붙이기 (+표지)
+        # 5) 이어붙이기
         print(f"[이어붙이기] 조각 합치는 중...", flush=True)
+        combined = os.path.join(tmp, "combined.mp4")
+        concat_ts(ts_files, combined, tmp)
+        stage = combined
+
+        # 6) 배경음악 (있으면 영상 길이에 맞춰 반복/컷 하여 믹스)
+        if bgm:
+            print(f"[배경음악] 영상 길이에 맞춰 삽입 (볼륨 {bgm_volume})...", flush=True)
+            bgm_out = os.path.join(tmp, "with_bgm.mp4")
+            add_bgm(stage, bgm, bgm_out, bgm_volume)
+            stage = bgm_out
+
+        # 7) 표지(커버) 또는 최종 저장
         if cover and thumb:
-            combined = os.path.join(tmp, "combined.mp4")
-            concat_ts(ts_files, combined, tmp)
             print(f"[표지] 썸네일 커버 삽입...", flush=True)
-            add_cover(combined, thumb, out_path)
+            add_cover(stage, thumb, out_path)
         else:
-            concat_ts(ts_files, out_path, tmp)
+            shutil.copyfile(stage, out_path)
 
     print(f"\n완료! 저장됨: {out_path}", flush=True)
 
@@ -247,6 +279,9 @@ def main():
     ap.add_argument("--intro-sec", type=float, default=2.5, help="인트로 길이(초)")
     ap.add_argument("--intro-video", default="", help="맨 앞에 붙일 인트로 영상 파일")
     ap.add_argument("--outro-video", default="", help="맨 뒤에 붙일 아웃트로 영상 파일")
+    ap.add_argument("--bgm", default="", help="배경음악 파일 (mp3/m4a/wav 등)")
+    ap.add_argument("--bgm-volume", type=float, default=0.25,
+                    help="배경음악 볼륨 배율(0~1, 기본 0.25)")
     ap.add_argument("--no-intro", dest="intro", action="store_false",
                     help="썸네일 인트로를 붙이지 않음")
     ap.add_argument("--no-cover", dest="cover", action="store_false",
@@ -263,6 +298,7 @@ def main():
     thumb = "" if args.thumb == "-" else args.thumb
     intro_video = "" if args.intro_video in ("", "-") else args.intro_video
     outro_video = "" if args.outro_video in ("", "-") else args.outro_video
+    bgm = "" if args.bgm in ("", "-") else args.bgm
 
     checks = [("영상", args.video, True)]
     if args.burn:
@@ -273,6 +309,8 @@ def main():
         checks.append(("인트로 영상", intro_video, True))
     if outro_video:
         checks.append(("아웃트로 영상", outro_video, True))
+    if bgm:
+        checks.append(("배경음악", bgm, True))
     for label, path, required in checks:
         if required and (not path or not os.path.isfile(path)):
             print(f"ERROR: {label} 파일을 찾을 수 없습니다: {path}")
@@ -282,7 +320,8 @@ def main():
              intro_sec=args.intro_sec, add_intro=args.intro,
              cover=args.cover, burn=args.burn,
              font=args.font, font_size=args.font_size,
-             intro_video=intro_video, outro_video=outro_video)
+             intro_video=intro_video, outro_video=outro_video,
+             bgm=bgm, bgm_volume=args.bgm_volume)
 
 
 if __name__ == "__main__":
