@@ -31,7 +31,7 @@ The GUI (`요약기_gui.py`) has three tabs. A **KO/EN language toggle button (�
 
 ### 1️⃣ Summarize tab — turn a stream into highlights
 
-- **Just paste the VOD URL** and it downloads the video, then automatically finds the **high audio-energy highlight segments**.
+- **Paste a VOD URL** *or* **load a video file you recorded yourself**, and it automatically finds the **high audio-energy highlight segments**. (URLs are downloaded first; local files skip the download and are analyzed directly.)
 - Picks highlights to match your target length (e.g. 10 min) and builds a **summary video**.
 - Auto-generates **subtitles (SRT)** with Whisper.
 - Lets you add **screen transitions** (none / fade to black / white flash) and **transition SFX** (none / whoosh / swoosh / beep / pop / impact) between highlights.
@@ -98,7 +98,7 @@ Below is the actual program screen. Just follow the numbers.
 
 | Item | Description | Default |
 |------|------|--------|
-| Stream / video URL | Paste the VOD address to summarize | — |
+| URL or local file | Paste the VOD address to summarize, or click **"Pick file"** to load a video you recorded yourself | — |
 | Output folder | Where the result files are saved | `output` |
 | Target length (min) | Desired length of the summary | `10` min |
 | Whisper model | Subtitle accuracy (bigger = more accurate, slower) | `small` recommended |

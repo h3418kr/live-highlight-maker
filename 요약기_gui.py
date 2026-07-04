@@ -31,7 +31,10 @@ STRINGS = {
         "lang_button": "🌐 English",
         # summarize tab
         "sum_heading": "영상 요약 — 방송을 하이라이트로",
-        "url": "영상/방송 URL",
+        "url": "URL 또는 로컬 파일",
+        "browse_file": "파일 선택",
+        "dlg_url_video": "로컬 영상 파일 선택",
+        "url_hint": "(방송 URL을 넣거나, 직접 녹화한 로컬 영상 파일을 선택하세요)",
         "outdir": "출력 폴더",
         "browse": "찾아보기",
         "options": "옵션",
@@ -124,7 +127,10 @@ STRINGS = {
         "lang_button": "🌐 한국어",
         # summarize tab
         "sum_heading": "Summarize — turn broadcasts into highlights",
-        "url": "Video / stream URL",
+        "url": "URL or local file",
+        "browse_file": "Pick file",
+        "dlg_url_video": "Select local video file",
+        "url_hint": "(paste a stream URL, or pick a video file you recorded yourself)",
         "outdir": "Output folder",
         "browse": "Browse",
         "options": "Options",
@@ -308,7 +314,7 @@ def build_summarizer_tab(nb):
     nb.add(frame, text=_t("tab_summarize"))
     reg("tab", (nb, frame), "tab_summarize")
     frame.columnconfigure(1, weight=1)
-    frame.rowconfigure(5, weight=1)
+    frame.rowconfigure(6, weight=1)
 
     pad = {"padx": 12, "pady": 4}
 
@@ -316,28 +322,42 @@ def build_summarizer_tab(nb):
     reg("text", heading, "sum_heading")
     heading.grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(10, 8))
 
-    # URL
+    # URL 또는 로컬 파일
     _label(frame, "url", row=1, column=0, sticky="w", **pad)
     url_var = tk.StringVar()
-    ttk.Entry(frame, textvariable=url_var, width=60).grid(
-        row=1, column=1, columnspan=2, sticky="ew", padx=(0, 12), pady=4)
+    ttk.Entry(frame, textvariable=url_var, width=52).grid(
+        row=1, column=1, sticky="ew", padx=(0, 4), pady=4)
+
+    def pick_local_video():
+        path = filedialog.askopenfilename(
+            title=_t("dlg_url_video"),
+            filetypes=[("Video", "*.mp4 *.mkv *.mov *.avi *.webm *.flv *.ts *.m4v"),
+                       ("All files", "*.*")])
+        if path:
+            url_var.set(path)
+
+    browse_file = ttk.Button(frame, text=_t("browse_file"), command=pick_local_video)
+    reg("text", browse_file, "browse_file")
+    browse_file.grid(row=1, column=2, padx=(0, 12), pady=4)
+
+    _label(frame, "url_hint", row=2, column=1, columnspan=2, sticky="w", padx=(0, 12), pady=(0, 4))
 
     # 출력 폴더
-    _label(frame, "outdir", row=2, column=0, sticky="w", **pad)
+    _label(frame, "outdir", row=3, column=0, sticky="w", **pad)
     outdir_var = tk.StringVar(value=os.path.join(SCRIPT_DIR, "output"))
     ttk.Entry(frame, textvariable=outdir_var, width=52).grid(
-        row=2, column=1, sticky="ew", padx=(0, 4), pady=4)
+        row=3, column=1, sticky="ew", padx=(0, 4), pady=4)
     browse_out = ttk.Button(
         frame, text=_t("browse"),
         command=lambda: outdir_var.set(
             filedialog.askdirectory(title=_t("dlg_outdir")) or outdir_var.get()))
     reg("text", browse_out, "browse")
-    browse_out.grid(row=2, column=2, padx=(0, 12), pady=4)
+    browse_out.grid(row=3, column=2, padx=(0, 12), pady=4)
 
     # 옵션
     opt = ttk.LabelFrame(frame, text=_t("options"), padding=8)
     reg("text", opt, "options")
-    opt.grid(row=3, column=0, columnspan=3, sticky="ew", padx=12, pady=6)
+    opt.grid(row=4, column=0, columnspan=3, sticky="ew", padx=12, pady=6)
     opt.columnconfigure(1, weight=1)
     opt.columnconfigure(3, weight=1)
 
@@ -401,11 +421,11 @@ def build_summarizer_tab(nb):
     btn_label_var = tk.StringVar(value=_t("btn_summarize"))
     reg("var", btn_label_var, "btn_summarize")
     run_btn = ttk.Button(frame, textvariable=btn_label_var, style="Accent.TButton")
-    run_btn.grid(row=4, column=0, columnspan=3, padx=12, pady=8, sticky="new")
+    run_btn.grid(row=5, column=0, columnspan=3, padx=12, pady=8, sticky="new")
 
     # 로그
     log = make_log(frame)
-    log.grid(row=5, column=0, columnspan=3, sticky="nsew", padx=12, pady=(0, 12))
+    log.grid(row=6, column=0, columnspan=3, sticky="nsew", padx=12, pady=(0, 12))
 
     def on_run():
         url = url_var.get().strip()

@@ -498,7 +498,7 @@ def safe_filename(title: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="YouTube video summarizer - extracts high-energy segments")
-    parser.add_argument("url", help="YouTube URL")
+    parser.add_argument("url", help="YouTube URL 또는 로컬 영상 파일 경로")
     parser.add_argument("--target-min", type=float, default=10.0, help="Target summary length in minutes (default: 10)")
     parser.add_argument("--model", default="base", choices=["tiny", "base", "small", "medium", "large"],
                         help="Whisper model size (default: base)")
@@ -540,13 +540,23 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="summarizer_") as tmpdir:
-        print(f"[1/7] Downloading video (max {args.max_height}p)...")
-        video_path, title = download_video(args.url, tmpdir, max_height=args.max_height)
-        print(f"  Title: {title}")
-        print(f"  Saved: {video_path}")
+        # URL 대신 로컬 영상 파일을 주면 다운로드를 건너뛰고 그 파일을 그대로 분석한다.
+        is_local = os.path.isfile(args.url)
+        if is_local:
+            video_path = args.url
+            title = os.path.splitext(os.path.basename(args.url))[0]
+            print(f"[1/6] Using local video (다운로드 건너뜀)...")
+            print(f"  Title: {title}")
+            print(f"  File : {video_path}")
+        else:
+            print(f"[1/7] Downloading video (max {args.max_height}p)...")
+            video_path, title = download_video(args.url, tmpdir, max_height=args.max_height)
+            print(f"  Title: {title}")
+            print(f"  Saved: {video_path}")
 
         # 원본 영상 보관 옵션: 지정한 폴더로 복사해 두어 삭제되지 않게 한다.
-        if args.save_video:
+        # (로컬 파일은 이미 사용자 소유이므로 다운로드한 경우에만 보관한다.)
+        if args.save_video and not is_local:
             try:
                 keep_dir = Path(args.save_video)
                 keep_dir.mkdir(parents=True, exist_ok=True)
