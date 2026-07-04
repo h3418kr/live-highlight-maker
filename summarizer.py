@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -510,6 +511,9 @@ def main():
     parser.add_argument("--expand-after", type=float, default=20.0,
                         help="Seconds to expand after each energy peak (default: 20)")
     parser.add_argument("--output-dir", default="output", help="Output directory (default: output)")
+    parser.add_argument("--save-video", default="",
+                        help="다운로드한 원본 영상을 이 폴더에 보관합니다(삭제하지 않음). "
+                             "비워두면 처리 후 원본을 삭제합니다.")
     parser.add_argument("--max-height", type=int, default=720,
                         choices=[360, 480, 720, 1080],
                         help="Max video resolution height (default: 720)")
@@ -540,6 +544,17 @@ def main():
         video_path, title = download_video(args.url, tmpdir, max_height=args.max_height)
         print(f"  Title: {title}")
         print(f"  Saved: {video_path}")
+
+        # 원본 영상 보관 옵션: 지정한 폴더로 복사해 두어 삭제되지 않게 한다.
+        if args.save_video:
+            try:
+                keep_dir = Path(args.save_video)
+                keep_dir.mkdir(parents=True, exist_ok=True)
+                kept_path = keep_dir / f"{safe_filename(title)}{os.path.splitext(video_path)[1] or '.mp4'}"
+                shutil.copy2(video_path, kept_path)
+                print(f"  원본 영상 보관: {kept_path}")
+            except Exception as e:
+                print(f"  (원본 영상 보관 실패, 계속 진행: {e})")
 
         print(f"[2/6] Extracting audio...")
         wav_path = os.path.join(tmpdir, "audio.wav")

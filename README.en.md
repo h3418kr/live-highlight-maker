@@ -27,7 +27,7 @@ It was built with game-stream highlight editing in mind, but works just as well 
 
 ## ✨ Key features
 
-The GUI (`요약기_gui.py`) has two tabs. A **KO/EN language toggle button (🌐)** sits in the top-right corner so you can switch the interface language anytime.
+The GUI (`요약기_gui.py`) has three tabs. A **KO/EN language toggle button (🌐)** sits in the top-right corner so you can switch the interface language anytime.
 
 ### 1️⃣ Summarize tab — turn a stream into highlights
 
@@ -35,9 +35,17 @@ The GUI (`요약기_gui.py`) has two tabs. A **KO/EN language toggle button (�
 - Picks highlights to match your target length (e.g. 10 min) and builds a **summary video**.
 - Auto-generates **subtitles (SRT)** with Whisper.
 - Lets you add **screen transitions** (none / fade to black / white flash) and **transition SFX** (none / whoosh / swoosh / beep / pop / impact) between highlights.
+- Set a **keep-original folder** and the downloaded source video is preserved instead of deleted → you can re-edit it later in the **Manual highlights tab**.
 - Output: `title_summary.mp4` (summary video), `title_summary.srt` (subtitles)
 
-### 2️⃣ Finalize tab — polish it for upload
+### 2️⃣ Manual highlights tab — your video + your chosen ranges
+
+- Build a summary video from a **local video file you already have** plus **highlight time ranges you type in yourself** — skipping the download and audio-analysis steps.
+- Enter one range per line as `start - end`. `SS` / `MM:SS` / `HH:MM:SS` are all supported, e.g. `1:23 - 2:05`, `83 - 125`, `00:01:23,000 --> 00:02:05,000` (SRT style).
+- Just like the Summarize tab, you can add **transitions / SFX**, and optionally auto-generate **subtitles (SRT)**.
+- Output: `name_highlight.mp4`, `name_highlight.srt` (when subtitles are on)
+
+### 3️⃣ Finalize tab — polish it for upload
 
 - Combines your **summary video + subtitles (SRT) + thumbnail** into a single finished mp4.
 - **Burns subtitles into** the picture (hardsub) → they show up on any player.
@@ -191,9 +199,10 @@ python 요약기_gui.py        # or double-click 요약기_실행.bat
 ## 📁 Repository layout
 
 ```
-├── 요약기_gui.py     # GUI (two tabs: Summarize · Finalize)
-├── summarizer.py     # stream-highlight summarization engine
-├── finalize.py       # combine video + subtitles + thumbnail + BGM
+├── 요약기_gui.py       # GUI (three tabs: Summarize · Manual highlights · Finalize)
+├── summarizer.py       # stream-highlight summarization engine
+├── manual_highlight.py # local video + manual time ranges → highlight video
+├── finalize.py         # combine video + subtitles + thumbnail + BGM
 ├── 요약기_실행.bat    # Windows launcher (system Python)
 ├── 사용설명서.txt     # portable-build user manual (Korean)
 ├── assets/           # README images (banner · workflow · UI guides)
