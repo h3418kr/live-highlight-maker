@@ -22,6 +22,7 @@ from summarizer import (
     TRANSITION_STYLES,
     SFX_SPECS,
     GAME_PROMPT,
+    build_chapters,
     cut_and_concat,
     extract_audio,
     transcribe,
@@ -151,6 +152,7 @@ def main():
     safe = safe_filename(base)
     out_video = str(output_dir / f"{safe}_highlight.mp4")
     out_srt = str(output_dir / f"{safe}_highlight.srt")
+    out_chapters = str(output_dir / f"{safe}_chapters.txt")
 
     total = sum(e - s for s, e in segments)
     v_name = TRANSITION_STYLES.get(args.transition_style, args.transition_style)
@@ -175,10 +177,16 @@ def main():
             with open(out_srt, "w", encoding="utf-8") as f:
                 f.write(srt_content)
 
+    # 유튜브 챕터 텍스트: 설명란에 그대로 붙여넣으면 챕터가 생긴다.
+    with open(out_chapters, "w", encoding="utf-8") as f:
+        f.write(build_chapters(segments))
+
     print(f"\nDone!")
-    print(f"  Video : {out_video}")
+    print(f"  Video    : {out_video}")
     if args.subtitles:
-        print(f"  SRT   : {out_srt}")
+        print(f"  SRT      : {out_srt}")
+    print(f"  Chapters : {out_chapters}")
+    print(f"  (챕터 파일 내용을 유튜브 설명란에 붙여넣으면 구간 이동 챕터가 생깁니다)")
 
 
 if __name__ == "__main__":

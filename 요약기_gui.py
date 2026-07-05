@@ -1,13 +1,16 @@
 """GUI launcher for summarizer.py (라이브 하이라이트 메이커 / Live Highlight Maker)
 
-두 개의 탭 / Two tabs:
-  1. 영상 요약 / Summarize   — URL → 요약 영상 + 자막(SRT)
-  2. 완성 영상 만들기 / Finalize — 영상 + 자막 + 썸네일 → 완성 mp4 (finalize.py)
+네 개의 탭 / Four tabs:
+  1. 영상 요약 / Summarize   — URL·로컬 파일 → 요약 영상 + 자막(SRT)
+  2. 수동 하이라이트 / Manual — 로컬 영상 + 직접 입력한 시간대 → 하이라이트 영상
+  3. 쇼츠 만들기 / Shorts     — 구간을 골라 9:16 세로 쇼츠 영상 (shorts.py)
+  4. 완성 영상 만들기 / Finalize — 영상 + 자막 + 썸네일 → 완성 mp4 (finalize.py)
 
 한/영 전환 버튼 제공 / KO-EN language toggle button.
 """
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -21,6 +24,10 @@ MODEL_CODES = ["tiny", "base", "small", "medium", "large"]
 QUALITY_CODES = ["360", "480", "720", "1080"]
 TRANS_CODES = ["none", "black", "white"]
 SFX_CODES = ["none", "whoosh", "swoosh", "beep", "pop", "impact"]
+SHORTS_MODE_CODES = ["center", "blur"]
+
+# 분석 전용 모드 결과를 수동 하이라이트 탭으로 넘길 때 쓰는 위젯 참조
+MANUAL_TAB = {}
 
 # ── 번역 문자열 / translation strings ─────────────────────────────────────────────
 STRINGS = {
@@ -58,6 +65,11 @@ STRINGS = {
         "save_video": "원본 영상 보관 폴더 (선택)",
         "save_video_hint": "(지정하면 다운로드한 원본을 삭제하지 않고 이 폴더에 보관합니다)",
         "dlg_save_video": "원본 영상 보관 폴더 선택",
+        "analyze_only": "구간 후보만 분석 (영상은 만들지 않음 — 빠름)",
+        "analyze_hint": "(분석이 끝나면 후보 구간이 수동 하이라이트 탭에 자동으로 채워집니다)",
+        "msg_analyze_done": ("하이라이트 후보 분석 완료!\n\n"
+                             "후보 구간 목록을 수동 하이라이트 탭에 불러왔습니다.\n"
+                             "구간을 확인·수정한 뒤 「하이라이트 만들기」를 누르세요."),
         # manual highlight tab
         "tab_manual": "  수동 하이라이트  ",
         "man_heading": "수동 하이라이트 — 받아둔 영상으로 직접 편집",
@@ -72,7 +84,22 @@ STRINGS = {
         "msg_need_man_video": "편집할 영상 파일을 선택하세요.",
         "msg_need_ranges": "하이라이트 시간대를 한 줄 이상 입력하세요.\n예: 1:23 - 2:05",
         "msg_man_done": ("하이라이트 영상이 저장되었습니다.\n\n폴더: {folder}\n\n"
-                         "• _highlight.mp4  — 하이라이트 영상"),
+                         "• _highlight.mp4  — 하이라이트 영상\n"
+                         "• _chapters.txt   — 유튜브 챕터 (설명란에 붙여넣기)"),
+        # shorts tab
+        "tab_shorts": "  쇼츠 만들기  ",
+        "shorts_heading": "쇼츠 만들기 — 구간을 골라 9:16 세로 영상으로",
+        "shorts_ranges": "쇼츠 구간",
+        "shorts_ranges_hint": "한 줄에 하나씩:  시작 - 끝   (총 3분 이하 권장, 여러 줄은 하드컷으로 이어붙임)",
+        "shorts_ranges_example": "# 쇼츠로 만들 구간을 입력하세요. (예: 하이라이트 한 장면)\n0:10 - 0:40\n",
+        "shorts_mode": "세로 변환 방식",
+        "shorts_mode_values": ["중앙 크롭 (기본)", "블러 배경"],
+        "shorts_mode_hint": "(중앙 크롭: 화면 가운데 확대 / 블러 배경: 원본 그대로 + 위아래 블러)",
+        "shorts_subtitles": "자막 자동 생성해 크게 새겨넣기 (Whisper)",
+        "shorts_font_size": "자막 크기",
+        "btn_shorts": "쇼츠 만들기",
+        "msg_shorts_done": ("쇼츠 영상이 저장되었습니다.\n\n폴더: {folder}\n\n"
+                            "• _shorts.mp4  — 1080x1920 세로 영상"),
         # finalize tab
         "video": "영상 파일",
         "srt": "자막 파일 (.srt)",
@@ -110,8 +137,9 @@ STRINGS = {
         "msg_need_url": "영상/방송 URL을 입력하세요.",
         "msg_done": "완료",
         "msg_summ_done": ("저장 완료!\n\n폴더: {folder}\n\n"
-                          "• _summary.mp4  — 요약 영상\n"
-                          "• _summary.srt  — 자막 파일 (편집 후 영상에 적용)"),
+                          "• _summary.mp4   — 요약 영상\n"
+                          "• _summary.srt   — 자막 파일 (편집 후 영상에 적용)\n"
+                          "• _chapters.txt  — 유튜브 챕터 (설명란에 붙여넣기)"),
         "msg_error": "오류",
         "msg_error_body": "처리 중 오류가 발생했습니다.\n로그를 확인하세요.",
         "msg_need_video": "영상 파일을 선택하세요.",
@@ -154,6 +182,11 @@ STRINGS = {
         "save_video": "Keep original video in folder (optional)",
         "save_video_hint": "(if set, the downloaded original is kept here instead of deleted)",
         "dlg_save_video": "Select folder to keep original video",
+        "analyze_only": "Analyze candidates only (no video output — fast)",
+        "analyze_hint": "(when done, the candidate ranges are loaded into the Manual highlights tab)",
+        "msg_analyze_done": ("Highlight analysis finished!\n\n"
+                             "The candidate ranges were loaded into the Manual highlights tab.\n"
+                             "Review / adjust them, then click \"Make highlights\"."),
         # manual highlight tab
         "tab_manual": "  Manual highlights  ",
         "man_heading": "Manual highlights — edit a video you already have",
@@ -168,7 +201,22 @@ STRINGS = {
         "msg_need_man_video": "Please select a video file to edit.",
         "msg_need_ranges": "Enter at least one highlight time range.\nExample: 1:23 - 2:05",
         "msg_man_done": ("Highlight video saved.\n\nFolder: {folder}\n\n"
-                         "- _highlight.mp4  — highlight video"),
+                         "- _highlight.mp4  — highlight video\n"
+                         "- _chapters.txt   — YouTube chapters (paste into description)"),
+        # shorts tab
+        "tab_shorts": "  Shorts  ",
+        "shorts_heading": "Shorts — pick ranges, get a 9:16 vertical video",
+        "shorts_ranges": "Shorts ranges",
+        "shorts_ranges_hint": "One per line:  start - end   (3 min total max recommended; lines are hard-cut together)",
+        "shorts_ranges_example": "# Enter the range(s) for the short (e.g. one highlight scene).\n0:10 - 0:40\n",
+        "shorts_mode": "Vertical mode",
+        "shorts_mode_values": ["Center crop (default)", "Blur background"],
+        "shorts_mode_hint": "(center crop: zoom into the middle / blur: full frame + blurred bars)",
+        "shorts_subtitles": "Auto-generate big burned-in subtitles (Whisper)",
+        "shorts_font_size": "Subtitle size",
+        "btn_shorts": "Make Short",
+        "msg_shorts_done": ("Short saved.\n\nFolder: {folder}\n\n"
+                            "- _shorts.mp4  — 1080x1920 vertical video"),
         # finalize tab
         "video": "Video file",
         "srt": "Subtitle (.srt)",
@@ -206,8 +254,9 @@ STRINGS = {
         "msg_need_url": "Please enter a video / stream URL.",
         "msg_done": "Done",
         "msg_summ_done": ("Saved!\n\nFolder: {folder}\n\n"
-                          "- _summary.mp4  — summary video\n"
-                          "- _summary.srt  — subtitle file (edit, then apply to video)"),
+                          "- _summary.mp4   — summary video\n"
+                          "- _summary.srt   — subtitle file (edit, then apply to video)\n"
+                          "- _chapters.txt  — YouTube chapters (paste into description)"),
         "msg_error": "Error",
         "msg_error_body": "An error occurred during processing.\nCheck the log.",
         "msg_need_video": "Please select a video file.",
@@ -305,6 +354,32 @@ def _label(parent, key, **grid):
     if grid:
         w.grid(**grid)
     return w
+
+
+def _load_analysis_into_manual(log_widget):
+    """분석 전용 모드 로그에서 결과 파일 경로를 찾아 수동 하이라이트 탭에 채운다.
+
+    summarizer.py 가 출력하는 'SEGMENTS_FILE::경로' / 'SOURCE_VIDEO::경로'
+    마커 줄을 파싱한다. 성공하면 True."""
+    if not MANUAL_TAB:
+        return False
+    txt = log_widget.get("1.0", tk.END)
+    seg_m = re.findall(r"SEGMENTS_FILE::(.+)", txt)
+    src_m = re.findall(r"SOURCE_VIDEO::(.+)", txt)
+    if not seg_m:
+        return False
+    try:
+        with open(seg_m[-1].strip(), "r", encoding="utf-8") as f:
+            ranges = f.read().strip()
+    except OSError:
+        return False
+    if not ranges:
+        return False
+    MANUAL_TAB["ranges_text"].delete("1.0", tk.END)
+    MANUAL_TAB["ranges_text"].insert("1.0", ranges + "\n")
+    if src_m and src_m[-1].strip():
+        MANUAL_TAB["video_var"].set(src_m[-1].strip())
+    return True
 
 
 # ── 탭 1: 영상 요약 ────────────────────────────────────────────────────────────
@@ -417,6 +492,13 @@ def build_summarizer_tab(nb):
     browse_save.grid(row=6, column=3, sticky="w", padx=(8, 4), pady=(6, 3))
     _label(opt, "save_video_hint", row=7, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
+    # 분석 전용 모드: 후보 구간만 뽑아 수동 하이라이트 탭으로 넘긴다
+    analyze_var = tk.BooleanVar(value=False)
+    chk_analyze = ttk.Checkbutton(opt, text=_t("analyze_only"), variable=analyze_var)
+    reg("text", chk_analyze, "analyze_only")
+    chk_analyze.grid(row=8, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "analyze_hint", row=9, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_summarize"))
     reg("var", btn_label_var, "btn_summarize")
@@ -449,6 +531,9 @@ def build_summarizer_tab(nb):
         ]
         if save_video_var.get().strip():
             cmd += ["--save-video", save_video_var.get().strip()]
+        analyze_mode = analyze_var.get()
+        if analyze_mode:
+            cmd.append("--analyze-only")
 
         log.config(state="normal")
         log.delete("1.0", tk.END)
@@ -459,12 +544,16 @@ def build_summarizer_tab(nb):
         def done(ok):
             run_btn.config(state="normal")
             btn_label_var.set(_t("btn_summarize"))
-            if ok:
+            if not ok:
+                messagebox.showerror(_t("msg_error"), _t("msg_error_body"))
+                return
+            if analyze_mode and _load_analysis_into_manual(log):
+                nb.select(MANUAL_TAB["frame"])
+                messagebox.showinfo(_t("msg_done"), _t("msg_analyze_done"))
+            else:
                 messagebox.showinfo(
                     _t("msg_done"),
                     _t("msg_summ_done").format(folder=outdir_var.get()))
-            else:
-                messagebox.showerror(_t("msg_error"), _t("msg_error_body"))
 
         run_script(cmd, log, done)
 
@@ -623,10 +712,166 @@ def build_manual_tab(nb):
         run_script(cmd, log, done)
 
     run_btn.config(command=on_run)
+
+    # 요약 탭의 분석 전용 모드가 결과를 넘겨줄 수 있게 위젯 참조를 공유
+    MANUAL_TAB.update(frame=frame, video_var=video_var, ranges_text=ranges_text)
     return frame
 
 
-# ── 탭 3: 완성 영상 만들기 ─────────────────────────────────────────────────────
+# ── 탭 3: 쇼츠 만들기 ─────────────────────────────────────────────────────────
+
+def build_shorts_tab(nb):
+    frame = ttk.Frame(nb, padding=4)
+    nb.add(frame, text=_t("tab_shorts"))
+    reg("tab", (nb, frame), "tab_shorts")
+    frame.columnconfigure(1, weight=1)
+    frame.rowconfigure(8, weight=1)
+
+    pad = {"padx": 12, "pady": 4}
+
+    heading = ttk.Label(frame, text=_t("shorts_heading"), font=("Segoe UI", 13, "bold"))
+    reg("text", heading, "shorts_heading")
+    heading.grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(10, 8))
+
+    video_var = tk.StringVar()
+    outdir_var = tk.StringVar(value=os.path.join(SCRIPT_DIR, "output"))
+    name_var = tk.StringVar()
+
+    # 영상 파일
+    _label(frame, "man_video", row=1, column=0, sticky="w", **pad)
+    ttk.Entry(frame, textvariable=video_var, width=52).grid(
+        row=1, column=1, sticky="ew", padx=(0, 4), pady=4)
+    browse_vid = ttk.Button(
+        frame, text=_t("browse"),
+        command=lambda: video_var.set(
+            filedialog.askopenfilename(
+                title=_t("dlg_man_video"),
+                filetypes=[(_t("ft_video"), "*.mp4 *.mov *.mkv *.avi *.webm"),
+                           (_t("ft_all"), "*.*")]) or video_var.get()))
+    reg("text", browse_vid, "browse")
+    browse_vid.grid(row=1, column=2, padx=(0, 12), pady=4)
+
+    # 출력 폴더
+    _label(frame, "outdir", row=2, column=0, sticky="w", **pad)
+    ttk.Entry(frame, textvariable=outdir_var, width=52).grid(
+        row=2, column=1, sticky="ew", padx=(0, 4), pady=4)
+    browse_out = ttk.Button(
+        frame, text=_t("browse"),
+        command=lambda: outdir_var.set(
+            filedialog.askdirectory(title=_t("dlg_outdir")) or outdir_var.get()))
+    reg("text", browse_out, "browse")
+    browse_out.grid(row=2, column=2, padx=(0, 12), pady=4)
+
+    # 출력 이름 (선택)
+    _label(frame, "man_name", row=3, column=0, sticky="w", **pad)
+    ttk.Entry(frame, textvariable=name_var, width=52).grid(
+        row=3, column=1, columnspan=2, sticky="ew", padx=(0, 12), pady=4)
+
+    # 쇼츠 구간 입력
+    _label(frame, "shorts_ranges", row=4, column=0, sticky="nw", padx=12, pady=(8, 0))
+    ranges_hint = ttk.Label(frame, text=_t("shorts_ranges_hint"), foreground="#9ca3af")
+    reg("text", ranges_hint, "shorts_ranges_hint")
+    ranges_hint.grid(row=4, column=1, columnspan=2, sticky="w", padx=(0, 12), pady=(8, 0))
+
+    ranges_text = tk.Text(frame, height=4, bg="#3c3c3c", fg="#e0e0e0",
+                          insertbackground="#e0e0e0", relief="flat",
+                          font=("Consolas", 10), wrap="none")
+    ranges_text.insert("1.0", _t("shorts_ranges_example"))
+    ranges_text.grid(row=5, column=0, columnspan=3, sticky="ew", padx=12, pady=(2, 6))
+
+    # 옵션
+    opt = ttk.LabelFrame(frame, text=_t("options"), padding=8)
+    reg("text", opt, "options")
+    opt.grid(row=6, column=0, columnspan=3, sticky="ew", padx=12, pady=6)
+    opt.columnconfigure(1, weight=1)
+    opt.columnconfigure(3, weight=1)
+
+    _label(opt, "shorts_mode", row=0, column=0, sticky="w", padx=(8, 4), pady=3)
+    mode_combo = ttk.Combobox(opt, values=_t("shorts_mode_values"), width=18, state="readonly")
+    mode_combo.current(0)  # center
+    reg("combo", (mode_combo, "shorts_mode_values"), "shorts_mode_values")
+    mode_combo.grid(row=0, column=1, sticky="w", pady=3)
+    fontsize_var = tk.StringVar(value="20")
+    _label(opt, "shorts_font_size", row=0, column=2, sticky="w", padx=(16, 4), pady=3)
+    ttk.Entry(opt, textvariable=fontsize_var, width=6).grid(row=0, column=3, sticky="w", pady=3)
+    _label(opt, "shorts_mode_hint", row=1, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+
+    subs_var = tk.BooleanVar(value=False)
+    chk_subs = ttk.Checkbutton(opt, text=_t("shorts_subtitles"), variable=subs_var)
+    reg("text", chk_subs, "shorts_subtitles")
+    chk_subs.grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 3))
+
+    lang_var = tk.StringVar(value="ko")
+    _label(opt, "model", row=3, column=0, sticky="w", padx=(8, 4), pady=3)
+    model_combo = ttk.Combobox(opt, values=_t("model_values"), width=16, state="readonly")
+    model_combo.current(2)  # small
+    reg("combo", (model_combo, "model_values"), "model_values")
+    model_combo.grid(row=3, column=1, sticky="w", pady=3)
+    _label(opt, "language", row=3, column=2, sticky="w", padx=(16, 4), pady=3)
+    ttk.Entry(opt, textvariable=lang_var, width=6).grid(row=3, column=3, sticky="w", pady=3)
+
+    # 실행 버튼
+    btn_label_var = tk.StringVar(value=_t("btn_shorts"))
+    reg("var", btn_label_var, "btn_shorts")
+    run_btn = ttk.Button(frame, textvariable=btn_label_var, style="Accent.TButton")
+    run_btn.grid(row=7, column=0, columnspan=3, padx=12, pady=8, sticky="ew")
+
+    # 로그
+    log = make_log(frame)
+    log.grid(row=8, column=0, columnspan=3, sticky="nsew", padx=12, pady=(0, 12))
+
+    def on_run():
+        video = video_var.get().strip()
+        ranges = ranges_text.get("1.0", tk.END).strip()
+        if not video:
+            messagebox.showwarning(_t("msg_input_error"), _t("msg_need_man_video"))
+            return
+        has_range = any(
+            ln.strip() and not ln.strip().startswith("#")
+            for ln in ranges.splitlines())
+        if not has_range:
+            messagebox.showwarning(_t("msg_input_error"), _t("msg_need_ranges"))
+            return
+
+        cmd = [
+            sys.executable, os.path.join(SCRIPT_DIR, "shorts.py"),
+            video,
+            "--ranges", ranges,
+            "--output-dir", outdir_var.get(),
+            "--mode", SHORTS_MODE_CODES[max(mode_combo.current(), 0)],
+        ]
+        if name_var.get().strip():
+            cmd += ["--name", name_var.get().strip()]
+        if fontsize_var.get().strip():
+            cmd += ["--font-size", fontsize_var.get().strip()]
+        if subs_var.get():
+            cmd += ["--subtitles",
+                    "--model", MODEL_CODES[max(model_combo.current(), 0)],
+                    "--lang", lang_var.get()]
+
+        log.config(state="normal")
+        log.delete("1.0", tk.END)
+        log.config(state="disabled")
+        run_btn.config(state="disabled")
+        btn_label_var.set(_t("processing"))
+
+        def done(ok):
+            run_btn.config(state="normal")
+            btn_label_var.set(_t("btn_shorts"))
+            if ok:
+                messagebox.showinfo(
+                    _t("msg_done"),
+                    _t("msg_shorts_done").format(folder=outdir_var.get()))
+            else:
+                messagebox.showerror(_t("msg_error"), _t("msg_error_body"))
+
+        run_script(cmd, log, done)
+
+    run_btn.config(command=on_run)
+    return frame
+
+
+# ── 탭 4: 완성 영상 만들기 ─────────────────────────────────────────────────────
 
 def build_finalize_tab(nb):
     frame = ttk.Frame(nb)
@@ -863,6 +1108,7 @@ def main():
 
     build_summarizer_tab(nb)
     build_manual_tab(nb)
+    build_shorts_tab(nb)
     build_finalize_tab(nb)
 
     root.mainloop()

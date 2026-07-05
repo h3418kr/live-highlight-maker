@@ -27,25 +27,34 @@ It was built with game-stream highlight editing in mind, but works just as well 
 
 ## ✨ Key features
 
-The GUI (`요약기_gui.py`) has three tabs. A **KO/EN language toggle button (🌐)** sits in the top-right corner so you can switch the interface language anytime.
+The GUI (`요약기_gui.py`) has four tabs. A **KO/EN language toggle button (🌐)** sits in the top-right corner so you can switch the interface language anytime.
 
 ### 1️⃣ Summarize tab — turn a stream into highlights
 
 - **Paste a VOD URL** *or* **load a video file you recorded yourself**, and it automatically finds the **high audio-energy highlight segments**. (URLs are downloaded first; local files skip the download and are analyzed directly.)
 - Picks highlights to match your target length (e.g. 10 min) and builds a **summary video**.
-- Auto-generates **subtitles (SRT)** with Whisper.
+- Auto-generates **subtitles (SRT)** with Whisper, plus a **YouTube chapters text** (`_chapters.txt`) you can paste straight into the video description.
+- Turn on **"Analyze candidates only"** to skip building the video and just extract candidate highlight ranges quickly — they are **auto-loaded into the Manual highlights tab** so you can review and adjust them before building.
 - Lets you add **screen transitions** (none / fade to black / white flash) and **transition SFX** (none / whoosh / swoosh / beep / pop / impact) between highlights.
 - Set a **keep-original folder** and the downloaded source video is preserved instead of deleted → you can re-edit it later in the **Manual highlights tab**.
-- Output: `title_summary.mp4` (summary video), `title_summary.srt` (subtitles)
+- Output: `title_summary.mp4` (summary video), `title_summary.srt` (subtitles), `title_chapters.txt` (YouTube chapters)
 
 ### 2️⃣ Manual highlights tab — your video + your chosen ranges
 
 - Build a summary video from a **local video file you already have** plus **highlight time ranges you type in yourself** — skipping the download and audio-analysis steps.
 - Enter one range per line as `start - end`. `SS` / `MM:SS` / `HH:MM:SS` are all supported, e.g. `1:23 - 2:05`, `83 - 125`, `00:01:23,000 --> 00:02:05,000` (SRT style).
 - Just like the Summarize tab, you can add **transitions / SFX**, and optionally auto-generate **subtitles (SRT)**.
-- Output: `name_highlight.mp4`, `name_highlight.srt` (when subtitles are on)
+- Output: `name_highlight.mp4`, `name_highlight.srt` (when subtitles are on), `name_chapters.txt` (YouTube chapters)
 
-### 3️⃣ Finalize tab — polish it for upload
+### 3️⃣ Shorts tab — pick a scene, get a 9:16 vertical video
+
+- Pick any range(s) from a video and export a **1080x1920 vertical short** (YouTube Shorts / Instagram Reels / TikTok spec).
+- Two vertical modes: **center crop** (zoom into the middle) or **blur background** (full frame + blurred bars).
+- Turn on **auto subtitles** to burn in Whisper captions in the **big bold shorts style**.
+- Multiple ranges are hard-cut together. (3 minutes total max recommended.)
+- Output: `name_shorts.mp4` (vertical video), `name_shorts.srt` (when subtitles are on)
+
+### 4️⃣ Finalize tab — polish it for upload
 
 - Combines your **summary video + subtitles (SRT) + thumbnail** into a single finished mp4.
 - **Burns subtitles into** the picture (hardsub) → they show up on any player.
@@ -110,11 +119,13 @@ Below is the actual program screen. Just follow the numbers.
 | Transition | Between highlights: none / fade to black / white flash | `fade to black` |
 | Transition SFX | SFX at the transition: none / whoosh / swoosh / beep / pop / impact | `whoosh` |
 | Keep-original folder | Folder to preserve the downloaded source video (empty = delete after processing) | empty |
+| Analyze candidates only | Skip building the video; extract candidate ranges and **auto-fill the Manual highlights tab** (skips Whisper, so it's fast) | off |
 
 **Button: click "Download & Summarize"** → download → analyze → edit, all automatic.
-When finished, two files appear in the output folder:
+When finished, three files appear in the output folder:
 - `title_summary.mp4` — summary video
 - `title_summary.srt` — subtitle file
+- `title_chapters.txt` — YouTube chapters (paste the contents into the description to get chapter markers)
 
 > The medium / large models are downloaded automatically over the internet on first use and stored in the `models` folder.
 > Set a **keep-original folder** and the source video is preserved, so you can re-edit it later in the **Manual highlights tab**.
@@ -142,7 +153,25 @@ Range input supports `SS` / `MM:SS` / `HH:MM:SS`:
 ```
 > Separators `-` `~` `->` `-->` are all accepted, and lines starting with `#` are treated as notes and ignored.
 
-**Button: click "Make highlights"** → cuts and stitches only the ranges you entered into `name_highlight.mp4` (+ `name_highlight.srt`).
+**Button: click "Make highlights"** → cuts and stitches only the ranges you entered into `name_highlight.mp4` (+ `name_highlight.srt`, `name_chapters.txt`).
+
+> **Tip:** Run the Summarize tab with **"Analyze candidates only"** turned on, and the auto-detected candidate ranges are filled into this tab. Review / adjust them, then just click Make highlights.
+
+---
+
+### STEP 1-C — Shorts tab (vertical video)
+
+Pick one great scene from a landscape video and turn it into a **9:16 vertical video for YouTube Shorts / Reels / TikTok**.
+
+| Item | Description | Default |
+|------|------|--------|
+| Video file | Select the source (or summary) local video | — |
+| Shorts ranges | One `start - end` per line (multiple lines are hard-cut together; 3 min total max recommended) | — |
+| Vertical mode | Center crop (zoom middle) / blur background (full frame + blurred bars) | `center crop` |
+| Subtitle size | Size of the burned-in captions | `20` |
+| Auto subtitles | Burn in big bold Whisper captions on/off | off |
+
+**Button: click "Make Short"** → `name_shorts.mp4` (1080x1920 vertical) is created.
 
 ---
 
@@ -226,9 +255,10 @@ python 요약기_gui.py        # or double-click 요약기_실행.bat
 ## 📁 Repository layout
 
 ```
-├── 요약기_gui.py       # GUI (three tabs: Summarize · Manual highlights · Finalize)
-├── summarizer.py       # stream-highlight summarization engine
+├── 요약기_gui.py       # GUI (four tabs: Summarize · Manual highlights · Shorts · Finalize)
+├── summarizer.py       # stream-highlight summarization engine (+analyze-only mode)
 ├── manual_highlight.py # local video + manual time ranges → highlight video
+├── shorts.py           # ranges → 9:16 vertical short
 ├── finalize.py         # combine video + subtitles + thumbnail + BGM
 ├── 요약기_실행.bat    # Windows launcher (system Python)
 ├── 사용설명서.txt     # portable-build user manual (Korean)

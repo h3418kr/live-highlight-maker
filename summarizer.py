@@ -333,6 +333,34 @@ def build_srt(whisper_result, segments: List[Tuple[float, float]],
     return "\n".join(entries)
 
 
+def fmt_hms(sec: float, force_hours: bool = False) -> str:
+    """초 -> '3:05' / '1:02:03' (챕터·구간 표기용)."""
+    sec = int(round(sec))
+    h, m, s = sec // 3600, (sec % 3600) // 60, sec % 60
+    if h or force_hours:
+        return f"{h:d}:{m:02d}:{s:02d}"
+    return f"{m:d}:{s:02d}"
+
+
+def build_chapters(segments: List[Tuple[float, float]], label: str = "하이라이트") -> str:
+    """구간 목록으로 유튜브 챕터 텍스트를 만든다.
+
+    출력 영상 타임라인 기준(누적 길이)으로 각 하이라이트의 시작 시각을 찍는다.
+    전환 효과는 클립 내부에서 처리되어 전체 길이가 변하지 않으므로
+    단순 누적 합이 곧 출력 타임스탬프다. 유튜브 챕터는 반드시 00:00 부터
+    시작해야 하므로 첫 줄은 항상 00:00 이다.
+    """
+    lines = []
+    t = 0.0
+    for i, (s, e) in enumerate(segments, 1):
+        m, sec_ = int(t // 60), int(round(t % 60))
+        h = m // 60
+        stamp = f"{h:d}:{m % 60:02d}:{sec_:02d}" if h else f"{m:02d}:{sec_:02d}"
+        lines.append(f"{stamp} {label} {i} (원본 {fmt_hms(s, force_hours=True)})")
+        t += e - s
+    return "\n".join(lines) + "\n"
+
+
 # 화면 전환(비디오) 스타일: key -> 사람이 읽는 이름
 TRANSITION_STYLES = {
     "none":  "없음",
@@ -530,6 +558,10 @@ def main():
     parser.add_argument("--bridge-gap", type=float, default=8.0,
                         help="이 시간(초) 이하로 가까운 하이라이트는 같은 내용으로 보고 "
                              "하나로 이어붙입니다 (전환 효과 없이). 기본 8초")
+    parser.add_argument("--analyze-only", action="store_true",
+                        help="영상을 만들지 않고 하이라이트 후보 구간만 분석해 "
+                             "구간 목록 파일(_segments.txt)로 저장합니다. "
+                             "자막 전사(Whisper)를 건너뛰어 훨씬 빠릅니다.")
     args = parser.parse_args()
 
     if args.no_transition:
@@ -556,12 +588,14 @@ def main():
 
         # 원본 영상 보관 옵션: 지정한 폴더로 복사해 두어 삭제되지 않게 한다.
         # (로컬 파일은 이미 사용자 소유이므로 다운로드한 경우에만 보관한다.)
+        kept_video = None
         if args.save_video and not is_local:
             try:
                 keep_dir = Path(args.save_video)
                 keep_dir.mkdir(parents=True, exist_ok=True)
                 kept_path = keep_dir / f"{safe_filename(title)}{os.path.splitext(video_path)[1] or '.mp4'}"
                 shutil.copy2(video_path, kept_path)
+                kept_video = str(kept_path)
                 print(f"  원본 영상 보관: {kept_path}")
             except Exception as e:
                 print(f"  (원본 영상 보관 실패, 계속 진행: {e})")
@@ -573,9 +607,14 @@ def main():
         duration = get_duration(video_path)
         print(f"  Duration: {duration:.1f}s ({duration/60:.1f} min)")
 
-        print(f"[3/6] Transcribing audio...")
-        whisper_result = transcribe(wav_path, args.model, args.lang, args.prompt)
-        print(f"  Transcribed {len(whisper_result.get('segments', []))} segments")
+        if args.analyze_only:
+            # 분석 전용 모드: Whisper 전사를 건너뛰어 빠르게 후보 구간만 뽑는다.
+            print(f"[3/6] (분석 전용 모드 - 자막 전사 건너뜀)")
+            whisper_result = {"segments": []}
+        else:
+            print(f"[3/6] Transcribing audio...")
+            whisper_result = transcribe(wav_path, args.model, args.lang, args.prompt)
+            print(f"  Transcribed {len(whisper_result.get('segments', []))} segments")
 
         print(f"[4/6] Analyzing audio energy...")
         energy, window_sec = compute_energy(wav_path, window_sec=0.5)
@@ -595,6 +634,35 @@ def main():
             sys.exit(1)
 
         safe_title = safe_filename(title)
+
+        if args.analyze_only:
+            # 후보 구간을 수동 하이라이트 탭에서 그대로 쓸 수 있는 형식으로 저장
+            seg_file = output_dir / f"{safe_title}_segments.txt"
+            with open(seg_file, "w", encoding="utf-8") as f:
+                for s, e in segments:
+                    f.write(f"{fmt_hms(s, force_hours=True)} - "
+                            f"{fmt_hms(e, force_hours=True)}\n")
+
+            # 수동 편집에 쓸 원본 영상 확보 (다운로드본이면 복사해 남긴다)
+            source_video = args.url if is_local else kept_video
+            if source_video is None:
+                try:
+                    kept_path = output_dir / (
+                        f"{safe_title}{os.path.splitext(video_path)[1] or '.mp4'}")
+                    shutil.copy2(video_path, kept_path)
+                    source_video = str(kept_path)
+                    print(f"  원본 영상 보관: {kept_path}")
+                except Exception as e:
+                    print(f"  (원본 영상 보관 실패: {e})")
+                    source_video = ""
+
+            print(f"\nDone! (분석 전용)")
+            print(f"  후보 구간 {len(segments)}개 저장: {seg_file}")
+            print(f"SEGMENTS_FILE::{seg_file}")
+            print(f"SOURCE_VIDEO::{source_video}")
+            print(f"\n  수동 하이라이트 탭에서 구간을 다듬은 뒤 영상을 만드세요.")
+            return
+
         out_video = str(output_dir / f"{safe_title}_summary.mp4")
         out_srt   = str(output_dir / f"{safe_title}_summary.srt")
 
@@ -609,9 +677,17 @@ def main():
         with open(out_srt, "w", encoding="utf-8") as f:
             f.write(srt_content)
 
+        # 유튜브 챕터 텍스트: 설명란에 그대로 붙여넣으면 챕터가 생긴다.
+        out_chapters = str(output_dir / f"{safe_title}_chapters.txt")
+        with open(out_chapters, "w", encoding="utf-8") as f:
+            f.write(build_chapters(segments))
+
         print(f"\nDone!")
-        print(f"  Video : {out_video}")
-        print(f"  SRT   : {out_srt}")
+        print(f"  Video    : {out_video}")
+        print(f"  SRT      : {out_srt}")
+        print(f"  Chapters : {out_chapters}")
+        print(f"  (챕터 파일 내용을 유튜브 설명란에 붙여넣으면 구간 이동 챕터가 생깁니다.")
+        print(f"   챕터는 3개 이상, 각 10초 이상일 때 유튜브에서 표시됩니다.)")
         print(f"\n  SRT 파일을 편집한 뒤 영상과 함께 CapCut / 편집기에 불러오세요.")
 
 
