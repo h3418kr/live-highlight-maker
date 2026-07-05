@@ -308,15 +308,30 @@ def _drop_prompt_echo(result, prompt: str):
 def transcribe(wav_path: str, model_name: str, lang: str, prompt: str = None):
     print(f"  Transcribing with Whisper ({model_name})...")
     model = whisper.load_model(model_name, download_root=_bundled_model_root())
-    result = model.transcribe(
-        wav_path, language=lang, word_timestamps=True, verbose=False,
-        initial_prompt=prompt or None,
-        # 이전 텍스트를 문맥으로 물고 가면 환각/반복 루프가 커진다. 짧은
-        # 하이라이트 클립에는 끄는 편이 프롬프트 따라읽기·반복을 크게 줄인다.
-        condition_on_previous_text=False,
-    )
+
+    def _run(p):
+        return model.transcribe(
+            wav_path, language=lang, word_timestamps=True, verbose=False,
+            initial_prompt=p or None,
+            # 이전 텍스트를 문맥으로 물고 가면 환각/반복 루프가 커진다. 짧은
+            # 하이라이트 클립에는 끄는 편이 프롬프트 따라읽기·반복을 크게 줄인다.
+            condition_on_previous_text=False,
+        )
+
+    result = _run(prompt)
     if prompt:
-        result = _drop_prompt_echo(result, prompt)
+        # _drop_prompt_echo 는 result 를 제자리 수정하므로, 필터 전에 세그먼트가
+        # 있었는지 먼저 기록해 둔다.
+        had_segments = bool(result.get("segments"))
+        filtered = _drop_prompt_echo(result, prompt)
+        # 프롬프트를 통째로 따라읽어(환각) 세그먼트가 전부 걸러졌다면, 실제
+        # 인식이 실패한 것이다. 이땐 용어 힌트 없이 한 번 더 인식해 자막을 살린다.
+        # (힌트가 없으니 전문 용어 정확도는 떨어질 수 있으나 자막은 나온다.)
+        if had_segments and not filtered.get("segments"):
+            print("  (용어 힌트 따라읽기 감지 - 힌트 없이 다시 인식합니다)")
+            result = _run(None)
+        else:
+            result = filtered
     return result
 
 
