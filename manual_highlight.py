@@ -18,6 +18,10 @@ import tempfile
 from pathlib import Path
 from typing import List, Tuple
 
+# 포터블(임베디드) 파이썬은 python311._pth 때문에 스크립트 폴더를 sys.path 에
+# 자동 추가하지 않는다. 같은 폴더의 summarizer 등을 import 하려면 직접 넣어준다.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from summarizer import (
     TRANSITION_STYLES,
     SFX_SPECS,
