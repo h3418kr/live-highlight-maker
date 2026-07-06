@@ -808,13 +808,15 @@ def silence_cut(video_path: str, out_path: str, tmpdir: str, threshold_db: float
             line = lines[i]
             if "silence_start:" in line:
                 try:
-                    start_str = line.split("silence_start:")[-1].strip()
+                    start_str = line.split("silence_start:")[-1].strip().split()[0]
                     start = float(start_str)
                     # Look for corresponding silence_end in next few lines
                     end = None
                     for j in range(i+1, min(i+5, len(lines))):
                         if "silence_end:" in lines[j]:
-                            end_str = lines[j].split("silence_end:")[-1].strip()
+                            # silence_end 줄은 '2.345 | silence_duration: 1.1' 형식이라
+                            # 첫 토큰(숫자)만 취해야 float 파싱이 된다.
+                            end_str = lines[j].split("silence_end:")[-1].strip().split()[0]
                             end = float(end_str)
                             break
                     if end is not None:
