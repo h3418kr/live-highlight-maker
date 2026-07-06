@@ -8,6 +8,7 @@
 
 한/영 전환 버튼 제공 / KO-EN language toggle button.
 """
+import ctypes
 import os
 import queue
 import re
@@ -18,6 +19,13 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ── sv-ttk availability check ─────────────────────────────────────────────────────
+try:
+    import sv_ttk
+    SV_TTK_AVAILABLE = True
+except ImportError:
+    SV_TTK_AVAILABLE = False
 
 # ── 내부 코드값 (언어와 무관) / internal codes (language-independent) ──────────────
 MODEL_CODES = ["tiny", "base", "small", "medium", "large"]
@@ -55,6 +63,8 @@ MANUAL_TAB = {}
 STRINGS = {
     "ko": {
         "win_title": "라이브 하이라이트 메이커",
+        "app_title": "라이브 하이라이트 메이커",
+        "status_ready": "준비 완료",
         "tab_summarize": "  영상 요약  ",
         "tab_finalize": "  완성 영상 만들기  ",
         "lang_button": "🌐 English",
@@ -191,6 +201,8 @@ STRINGS = {
     },
     "en": {
         "win_title": "Live Highlight Maker",
+        "app_title": "Live Highlight Maker",
+        "status_ready": "Ready",
         "tab_summarize": "  Summarize  ",
         "tab_finalize": "  Finalize  ",
         "lang_button": "🌐 한국어",
@@ -358,7 +370,7 @@ def apply_language():
             obj.title(_t(key))
 
 
-def run_script(cmd, log_widget, done_cb):
+def run_script(cmd, log_widget, done_cb, status_var=None):
     q = queue.Queue()
 
     def worker():
@@ -389,6 +401,11 @@ def run_script(cmd, log_widget, done_cb):
                     log_widget.insert(tk.END, payload)
                     log_widget.see(tk.END)
                     log_widget.config(state="disabled")
+                    # Update status from log line if status_var is provided
+                    if status_var and payload.strip():
+                        # Look for progress patterns like [n/m] or key phrases
+                        if "[" in payload and "/" in payload and "]" in payload:
+                            status_var.set(payload.strip()[:80])  # trim to 80 chars
                 elif msg_type == "done":
                     done_cb(payload)
                     return
@@ -601,9 +618,18 @@ def build_summarizer_tab(nb):
         run_btn.config(state="disabled")
         btn_label_var.set(_t("processing"))
 
+        # Get root window to access shared progress and status
+        root_window = frame.winfo_toplevel()
+        progress = getattr(root_window, 'progress', None)
+        status_var = getattr(root_window, 'status_var', None)
+
         def done(ok):
             run_btn.config(state="normal")
             btn_label_var.set(_t("btn_summarize"))
+            if progress:
+                progress.stop()
+            if status_var:
+                status_var.set(_t("status_ready"))
             if not ok:
                 messagebox.showerror(_t("msg_error"), _t("msg_error_body"))
                 return
@@ -615,7 +641,9 @@ def build_summarizer_tab(nb):
                     _t("msg_done"),
                     _t("msg_summ_done").format(folder=outdir_var.get()))
 
-        run_script(cmd, log, done)
+        if progress:
+            progress.start()
+        run_script(cmd, log, done, status_var=status_var)
 
     run_btn.config(command=on_run)
     return frame
@@ -768,9 +796,18 @@ def build_manual_tab(nb):
         run_btn.config(state="disabled")
         btn_label_var.set(_t("processing"))
 
+        # Get root window to access shared progress and status
+        root_window = frame.winfo_toplevel()
+        progress = getattr(root_window, 'progress', None)
+        status_var = getattr(root_window, 'status_var', None)
+
         def done(ok):
             run_btn.config(state="normal")
             btn_label_var.set(_t("btn_manual"))
+            if progress:
+                progress.stop()
+            if status_var:
+                status_var.set(_t("status_ready"))
             if ok:
                 messagebox.showinfo(
                     _t("msg_done"),
@@ -778,7 +815,9 @@ def build_manual_tab(nb):
             else:
                 messagebox.showerror(_t("msg_error"), _t("msg_error_body"))
 
-        run_script(cmd, log, done)
+        if progress:
+            progress.start()
+        run_script(cmd, log, done, status_var=status_var)
 
     run_btn.config(command=on_run)
 
@@ -931,9 +970,18 @@ def build_shorts_tab(nb):
         run_btn.config(state="disabled")
         btn_label_var.set(_t("processing"))
 
+        # Get root window to access shared progress and status
+        root_window = frame.winfo_toplevel()
+        progress = getattr(root_window, 'progress', None)
+        status_var = getattr(root_window, 'status_var', None)
+
         def done(ok):
             run_btn.config(state="normal")
             btn_label_var.set(_t("btn_shorts"))
+            if progress:
+                progress.stop()
+            if status_var:
+                status_var.set(_t("status_ready"))
             if ok:
                 messagebox.showinfo(
                     _t("msg_done"),
@@ -941,7 +989,9 @@ def build_shorts_tab(nb):
             else:
                 messagebox.showerror(_t("msg_error"), _t("msg_error_body"))
 
-        run_script(cmd, log, done)
+        if progress:
+            progress.start()
+        run_script(cmd, log, done, status_var=status_var)
 
     run_btn.config(command=on_run)
     return frame
@@ -1177,16 +1227,27 @@ def build_finalize_tab(nb):
         run_btn.config(state="disabled")
         btn_label_var.set(_t("processing"))
 
+        # Get root window to access shared progress and status
+        root_window = frame.winfo_toplevel()
+        progress = getattr(root_window, 'progress', None)
+        status_var = getattr(root_window, 'status_var', None)
+
         def done(ok):
             run_btn.config(state="normal")
             btn_label_var.set(_t("btn_finalize"))
+            if progress:
+                progress.stop()
+            if status_var:
+                status_var.set(_t("status_ready"))
             if ok:
                 messagebox.showinfo(_t("msg_done"),
                                     _t("msg_final_done").format(path=out))
             else:
                 messagebox.showerror(_t("msg_error"), _t("msg_error_body"))
 
-        run_script(cmd, log, done)
+        if progress:
+            progress.start()
+        run_script(cmd, log, done, status_var=status_var)
 
     run_btn.config(command=on_run)
     return frame
@@ -1201,48 +1262,67 @@ def main():
     root.geometry("720x800")
     root.minsize(640, 660)
 
+    # STAGE 1: Apply modern theme (sv-ttk dark if available)
     style = ttk.Style(root)
-    try:
-        style.theme_use("clam")
-    except Exception:
-        pass
 
-    style.configure("TFrame", background="#2d2d2d")
-    style.configure("TLabel", background="#2d2d2d", foreground="#e0e0e0")
-    style.configure("TLabelframe", background="#2d2d2d", foreground="#e0e0e0")
-    style.configure("TLabelframe.Label", background="#2d2d2d", foreground="#aaaaaa")
-    style.configure("TCheckbutton", background="#2d2d2d", foreground="#e0e0e0")
-    style.configure("TEntry", fieldbackground="#3c3c3c", foreground="#e0e0e0", insertcolor="#e0e0e0")
-    style.configure("TCombobox", fieldbackground="#3c3c3c", foreground="#e0e0e0")
-    style.configure("TNotebook", background="#2d2d2d", tabmargins=[2, 5, 2, 0])
-    style.configure("TNotebook.Tab", background="#3c3c3c", foreground="#cccccc",
-                    padding=[10, 4], font=("Segoe UI", 10))
-    style.map("TNotebook.Tab",
-              background=[("selected", "#1e1e1e")],
-              foreground=[("selected", "#ffffff")])
-    style.configure("Accent.TButton", font=("Segoe UI", 11, "bold"),
-                    background="#0078d4", foreground="#ffffff", padding=8)
-    style.map("Accent.TButton",
-              background=[("active", "#005fa3"), ("disabled", "#555555")],
-              foreground=[("disabled", "#888888")])
-    style.configure("TButton", background="#3c3c3c", foreground="#e0e0e0")
-    style.map("TButton", background=[("active", "#505050")])
-    style.configure("Lang.TButton", background="#3c3c3c", foreground="#e0e0e0",
-                    font=("Segoe UI", 9))
-    root.configure(bg="#2d2d2d")
+    if SV_TTK_AVAILABLE:
+        sv_ttk.set_theme("dark")
+    else:
+        # Fallback: manual dark theme styling (legacy)
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
 
-    # 상단 바: 언어 전환 버튼 / top bar: language toggle
-    top = ttk.Frame(root)
-    top.pack(fill="x")
+        style.configure("TFrame", background="#2d2d2d")
+        style.configure("TLabel", background="#2d2d2d", foreground="#e0e0e0")
+        style.configure("TLabelframe", background="#2d2d2d", foreground="#e0e0e0")
+        style.configure("TLabelframe.Label", background="#2d2d2d", foreground="#aaaaaa")
+        style.configure("TCheckbutton", background="#2d2d2d", foreground="#e0e0e0")
+        style.configure("TEntry", fieldbackground="#3c3c3c", foreground="#e0e0e0", insertcolor="#e0e0e0")
+        style.configure("TCombobox", fieldbackground="#3c3c3c", foreground="#e0e0e0")
+        style.configure("TNotebook", background="#2d2d2d", tabmargins=[2, 5, 2, 0])
+        style.configure("TNotebook.Tab", background="#3c3c3c", foreground="#cccccc",
+                        padding=[10, 4], font=("Segoe UI", 10))
+        style.map("TNotebook.Tab",
+                  background=[("selected", "#1e1e1e")],
+                  foreground=[("selected", "#ffffff")])
+        style.configure("Accent.TButton", font=("Segoe UI", 11, "bold"),
+                        background="#0078d4", foreground="#ffffff", padding=8)
+        style.map("Accent.TButton",
+                  background=[("active", "#005fa3"), ("disabled", "#555555")],
+                  foreground=[("disabled", "#888888")])
+        style.configure("TButton", background="#3c3c3c", foreground="#e0e0e0")
+        style.map("TButton", background=[("active", "#505050")])
+        root.configure(bg="#2d2d2d")
+
+    # STAGE 2: Header frame with app title and language toggle
+    header = ttk.Frame(root)
+    header.pack(fill="x", padx=8, pady=(6, 0))
+
+    title_label = ttk.Label(header, text=_t("app_title"), font=("Segoe UI", 12, "bold"))
+    reg("text", title_label, "app_title")
+    title_label.pack(side="left", padx=4, pady=4)
 
     def toggle_lang():
         STATE["lang"] = "en" if STATE["lang"] == "ko" else "ko"
         lang_btn.config(text=_t("lang_button"))
         apply_language()
 
-    lang_btn = ttk.Button(top, text=_t("lang_button"), style="Lang.TButton",
-                          command=toggle_lang)
-    lang_btn.pack(side="right", padx=8, pady=(6, 0))
+    lang_btn = ttk.Button(header, text=_t("lang_button"), command=toggle_lang)
+    lang_btn.pack(side="right", padx=4, pady=4)
+
+    # STAGE 3: Shared progress bar and status line
+    progress_frame = ttk.Frame(root)
+    progress_frame.pack(fill="x", padx=8, pady=(2, 6))
+
+    status_var = tk.StringVar(value=_t("status_ready"))
+    reg("var", status_var, "status_ready")
+    status_label = ttk.Label(progress_frame, textvariable=status_var)
+    status_label.pack(side="left", padx=4, pady=2)
+
+    progress = ttk.Progressbar(progress_frame, mode="indeterminate", length=200)
+    progress.pack(side="right", padx=4, pady=2)
 
     nb = ttk.Notebook(root)
     nb.pack(fill="both", expand=True)
@@ -1251,6 +1331,17 @@ def main():
     build_manual_tab(nb)
     build_shorts_tab(nb)
     build_finalize_tab(nb)
+
+    # Enable Windows dark title bar (Windows 10+)
+    try:
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.c_int(1), ctypes.sizeof(ctypes.c_int))
+    except Exception:
+        pass
+
+    # Store shared progress and status in root for access by tabs
+    root.progress = progress
+    root.status_var = status_var
 
     root.mainloop()
 

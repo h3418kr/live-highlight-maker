@@ -2,3 +2,4 @@ openai-whisper
 pydub
 numpy
 yt-dlp
+sv-ttk
