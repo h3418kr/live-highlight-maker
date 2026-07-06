@@ -40,3 +40,4 @@ Thumbs.db
 # ── 다운로드된 모델 / ffmpeg 바이너리 ──
 ffmpeg/
 *.pt
+gemini_key.txt

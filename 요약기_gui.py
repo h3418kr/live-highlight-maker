@@ -26,6 +26,25 @@ TRANS_CODES = ["none", "black", "white"]
 SFX_CODES = ["none", "whoosh", "swoosh", "beep", "pop", "impact"]
 WMPOS_CODES = ["tl", "tr", "bl", "br"]  # 좌상 우상 좌하 우하
 WMKEY_CODES = ["", "white", "black"]  # 배경 투명 처리: 없음 / 흰색 / 검정
+
+# Gemini API 키를 저장/불러오기 (한 번 입력하면 다음에도 자동 채움)
+GEMINI_KEY_FILE = os.path.join(SCRIPT_DIR, "gemini_key.txt")
+
+
+def load_gemini_key():
+    try:
+        with open(GEMINI_KEY_FILE, encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def save_gemini_key(key):
+    try:
+        with open(GEMINI_KEY_FILE, "w", encoding="utf-8") as f:
+            f.write((key or "").strip())
+    except Exception:
+        pass
 SHORTS_MODE_CODES = ["center", "blur"]
 SHORTS_SUBPOS_CODES = ["bottom", "center", "top"]  # 하단 중앙 상단
 
@@ -76,6 +95,10 @@ STRINGS = {
         "wm_colorkey": "배경 투명 처리",
         "wm_colorkey_values": ["없음", "흰색 제거", "검정 제거"],
         "wm_colorkey_hint": "(단색 배경 로고면 그 색을 투명 처리)",
+        "auto_labels": "AI 자동 키워드 (Gemini)",
+        "auto_labels_hint": "(자막을 AI로 분석해 구간별 키워드를 마크 아래 표시)",
+        "gemini_key": "Gemini API 키",
+        "gemini_key_hint": "(aistudio.google.com 에서 무료 발급 · 저장됨)",
         "label_position": "소제목 위치",
         "label_position_hint": "(‘시작-끝 | 소제목’으로 입력한 소제목이 뜨는 자리)",
         "analyze_only": "구간 후보만 분석 (영상은 만들지 않음 — 빠름)",
@@ -207,6 +230,10 @@ STRINGS = {
         "wm_colorkey": "Make background transparent",
         "wm_colorkey_values": ["None", "Remove white", "Remove black"],
         "wm_colorkey_hint": "(for a logo on a solid-color background)",
+        "auto_labels": "Auto keywords (Gemini AI)",
+        "auto_labels_hint": "(AI reads the subtitles and shows a keyword per section under the mark)",
+        "gemini_key": "Gemini API key",
+        "gemini_key_hint": "(free key from aistudio.google.com · saved)",
         "label_position": "Subtitle position",
         "label_position_hint": "(where the 'start-end | subtitle' text appears)",
         "analyze_only": "Analyze candidates only (no video output — fast)",
@@ -1060,6 +1087,18 @@ def build_finalize_tab(nb):
     wmkey_combo.grid(row=5, column=1, sticky="w", pady=(0, 3))
     _label(opt, "wm_colorkey_hint", row=5, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(0, 3))
 
+    # AI 자동 키워드 (Gemini) — 자막을 분석해 구간별 키워드를 마크 아래 표시
+    autolabels_var = tk.BooleanVar(value=False)
+    chk_labels = ttk.Checkbutton(opt, text=_t("auto_labels"), variable=autolabels_var)
+    reg("text", chk_labels, "auto_labels")
+    chk_labels.grid(row=6, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 0))
+    _label(opt, "auto_labels_hint", row=6, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(8, 0))
+    _label(opt, "gemini_key", row=7, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
+    gemini_key_var = tk.StringVar(value=load_gemini_key())
+    ttk.Entry(opt, textvariable=gemini_key_var, width=28, show="•").grid(
+        row=7, column=1, columnspan=2, sticky="ew", pady=(0, 3))
+    _label(opt, "gemini_key_hint", row=7, column=3, sticky="w", padx=(8, 4), pady=(0, 3))
+
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_finalize"))
     reg("var", btn_label_var, "btn_finalize")
@@ -1108,12 +1147,24 @@ def build_finalize_tab(nb):
         if bgm_var.get().strip():
             cmd += ["--bgm", bgm_var.get().strip(),
                     "--bgm-volume", bgm_volume_var.get().strip() or "0.25"]
+        wm_pos = WMPOS_CODES[max(wmpos_combo.current(), 0)]
         if watermark_var.get().strip():
-            cmd += ["--watermark", watermark_var.get().strip(),
-                    "--wm-pos", WMPOS_CODES[max(wmpos_combo.current(), 0)]]
+            cmd += ["--watermark", watermark_var.get().strip(), "--wm-pos", wm_pos]
             wmkey = WMKEY_CODES[max(wmkey_combo.current(), 0)]
             if wmkey:
                 cmd += ["--wm-colorkey", wmkey]
+
+        # AI 자동 키워드 (Gemini)
+        gkey = gemini_key_var.get().strip()
+        if autolabels_var.get():
+            if not gkey:
+                messagebox.showwarning(_t("msg_input_error"), _t("gemini_key"))
+                return
+            save_gemini_key(gkey)
+            cmd += ["--auto-labels", "--gemini-key", gkey]
+            # 라벨 위치(마크 아래)를 위해 위치를 항상 전달 (마크가 없어도)
+            if "--wm-pos" not in cmd:
+                cmd += ["--wm-pos", wm_pos]
 
         log.config(state="normal")
         log.delete("1.0", tk.END)
@@ -1142,8 +1193,8 @@ def main():
     root = tk.Tk()
     root.title(_t("win_title"))
     reg("title", root, "win_title")
-    root.geometry("720x740")
-    root.minsize(640, 620)
+    root.geometry("720x800")
+    root.minsize(640, 660)
 
     style = ttk.Style(root)
     try:
