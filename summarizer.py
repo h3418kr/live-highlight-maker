@@ -30,6 +30,40 @@ import whisper
 from pydub import AudioSegment
 
 
+# ── Font helper for bundled fonts ────────────────────────────────────────────
+def bundled_fonts_dir():
+    """경로를 쓸 수 없는 환경에서 번들 폰트 폴더를 찾는다."""
+    base = os.path.dirname(os.path.abspath(__file__))
+    # repo root 의 배포_요약기_무설치 폴더에 fonts 가 있는 경우
+    dist_fonts = os.path.join(base, "배포_요약기_무설치", "fonts")
+    if os.path.isdir(dist_fonts):
+        return dist_fonts
+    # 배포 폴더 내에서 실행되는 경우(base 자체가 배포 폴더)
+    local_fonts = os.path.join(base, "fonts")
+    if os.path.isdir(local_fonts):
+        return local_fonts
+    return None
+
+
+def copy_fonts_to(target_dir: str):
+    """번들된 TTF 폰트를 대상 디렉터리에 복사한다."""
+    fonts_dir = bundled_fonts_dir()
+    if not fonts_dir:
+        return
+    target_dir = os.path.abspath(target_dir)
+    if not os.path.isdir(target_dir):
+        return
+    try:
+        for font_file in os.listdir(fonts_dir):
+            if font_file.endswith(('.ttf', '.otf')):
+                src = os.path.join(fonts_dir, font_file)
+                dst = os.path.join(target_dir, font_file)
+                if os.path.isfile(src):
+                    shutil.copy(src, dst)
+    except Exception:
+        pass
+
+
 # Windows: 하위 프로세스가 별도 콘솔(검은 창)을 띄우지 않도록.
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
@@ -180,7 +214,7 @@ def _build_label_ass(W: int, H: int, labels, anchor: int, x: int, y: int,
 def apply_overlays(in_video: str, out_video: str, tmpdir: str, *,
                    watermark: str = "", wm_pos: str = "tr",
                    wm_scale: float = 0.12, wm_margin: int = 24,
-                   labels=None, font: str = "Malgun Gothic",
+                   labels=None, font: str = "Paperlogy",
                    label_size: int = 40) -> bool:
     """본영상에 워터마크(마크) 이미지와 하이라이트별 소제목을 새겨넣는다.
 
@@ -240,7 +274,9 @@ def apply_overlays(in_video: str, out_video: str, tmpdir: str, *,
         ass_name = "labels.ass"
         with open(os.path.join(tmpdir, ass_name), "w", encoding="utf-8") as f:
             f.write(ass)
-        fc_parts.append(f"{vlabel}subtitles={ass_name}[v]")
+        # Copy bundled fonts to tmpdir so libass can find them
+        copy_fonts_to(tmpdir)
+        fc_parts.append(f"{vlabel}subtitles={ass_name}:fontsdir=.[v]")
         vmap = "[v]"
     else:
         # 워터마크만: 마지막 비디오 라벨을 그대로 출력으로.

@@ -133,8 +133,8 @@ def main():
                         help="하이라이트 소제목 위치: tl(좌상) tr(우상) bl(좌하) br(우하). 기본 tr")
     parser.add_argument("--label-size", type=int, default=40,
                         help="하이라이트 소제목 글자 크기 (기본 40)")
-    parser.add_argument("--font", default="Malgun Gothic",
-                        help="소제목 글꼴 (기본 Malgun Gothic)")
+    parser.add_argument("--font", default="Paperlogy",
+                        help="소제목 글꼴 (기본 Paperlogy)")
     args = parser.parse_args()
 
     if args.no_transition:

@@ -32,6 +32,37 @@ def _setup_bundled_paths():
 
 _setup_bundled_paths()
 
+# ── Font helper (bundled fonts) ──────────────────────────────────────────────
+def bundled_fonts_dir():
+    """번들 폰트 폴더를 찾는다."""
+    base = os.path.dirname(os.path.abspath(__file__))
+    dist_fonts = os.path.join(base, "배포_요약기_무설치", "fonts")
+    if os.path.isdir(dist_fonts):
+        return dist_fonts
+    local_fonts = os.path.join(base, "fonts")
+    if os.path.isdir(local_fonts):
+        return local_fonts
+    return None
+
+
+def copy_fonts_to(target_dir: str):
+    """번들된 TTF 폰트를 대상 디렉터리에 복사한다."""
+    fonts_dir = bundled_fonts_dir()
+    if not fonts_dir:
+        return
+    target_dir = os.path.abspath(target_dir)
+    if not os.path.isdir(target_dir):
+        return
+    try:
+        for font_file in os.listdir(fonts_dir):
+            if font_file.endswith(('.ttf', '.otf')):
+                src = os.path.join(fonts_dir, font_file)
+                dst = os.path.join(target_dir, font_file)
+                if os.path.isfile(src):
+                    shutil.copy(src, dst)
+    except Exception:
+        pass
+
 # Windows: 하위 프로세스가 별도 콘솔(검은 창)을 띄우지 않도록.
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 _PROC_KW = dict(stdin=subprocess.DEVNULL, creationflags=_CREATE_NO_WINDOW)
@@ -309,7 +340,7 @@ def render_main(video: str, srt_name: str, w: int, h: int, fps: str,
                 burn_sub: bool, watermark: str = "", wm_pos: str = "tr",
                 wm_scale: float = 0.12, wm_margin: int = 24,
                 wm_colorkey: str = "", labels=None,
-                label_font: str = "Malgun Gothic", label_size: int = 44) -> None:
+                label_font: str = "Paperlogy", label_size: int = 44) -> None:
     """본편을 규격 통일 + (선택)자막 하드섭 + (선택)채널 마크 오버레이 하여 TS 로.
 
     마크는 본편에만 들어간다(인트로/아웃트로 TS 는 손대지 않으므로 자동으로
@@ -334,7 +365,7 @@ def render_main(video: str, srt_name: str, w: int, h: int, fps: str,
         style = (f"FontName={font},FontSize={font_size},"
                  f"PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,"
                  f"BorderStyle=1,Outline=2,Shadow=1,MarginV=28")
-        base += f",subtitles={srt_name}:force_style='{style}'"
+        base += f",subtitles={srt_name}:force_style='{style}':fontsdir=."
     fc_parts.append(base + "[base]")
     cur = "[base]"
 
@@ -373,7 +404,7 @@ def render_main(video: str, srt_name: str, w: int, h: int, fps: str,
                                label_font, label_size)
         with open(os.path.join(cwd, "labels.ass"), "w", encoding="utf-8") as f:
             f.write(ass)
-        fc_parts.append(f"{cur}subtitles=labels.ass[vlab]")
+        fc_parts.append(f"{cur}subtitles=labels.ass:fontsdir=.[vlab]")
         cur = "[vlab]"
 
     # 4) 마무리 포맷
@@ -437,7 +468,7 @@ def add_cover(video_mp4: str, thumb: str, out_mp4: str) -> None:
 def finalize(video: str, srt: str, thumb: str, out_path: str,
              intro_sec: float = 2.5, add_intro: bool = True,
              cover: bool = True, burn: bool = True,
-             font: str = "Malgun Gothic", font_size: int = 24,
+             font: str = "Paperlogy", font_size: int = 24,
              intro_video: str = "", outro_video: str = "",
              bgm: str = "", bgm_volume: float = 0.25,
              watermark: str = "", wm_pos: str = "tr",
@@ -494,6 +525,8 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
         if burn and srt:
             srt_name = "sub.srt"
             shutil.copyfile(srt, os.path.join(tmp, srt_name))
+        # Copy bundled fonts to tmpdir so libass can find them
+        copy_fonts_to(tmp)
         render_main(video, srt_name, w, h, fps, main_ts, tmp, font, font_size,
                     burn_sub=bool(burn and srt), watermark=watermark,
                     wm_pos=wm_pos, wm_scale=wm_scale, wm_margin=wm_margin,
@@ -557,7 +590,7 @@ def main():
                     help="썸네일 표지(커버)를 넣지 않음")
     ap.add_argument("--no-subs", dest="burn", action="store_false",
                     help="자막을 새겨넣지 않음")
-    ap.add_argument("--font", default="Malgun Gothic", help="자막 글꼴")
+    ap.add_argument("--font", default="Paperlogy", help="자막 글꼴")
     ap.add_argument("--font-size", type=int, default=24, help="자막 크기")
     ap.add_argument("--watermark", default="",
                     help="본영상에 새겨넣을 채널 마크(로고) 이미지 경로. "

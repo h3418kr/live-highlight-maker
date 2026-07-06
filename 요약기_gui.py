@@ -55,6 +55,7 @@ def save_gemini_key(key):
         pass
 SHORTS_MODE_CODES = ["center", "blur"]
 SHORTS_SUBPOS_CODES = ["bottom", "center", "top"]  # 하단 중앙 상단
+FONT_CODES = ["Paperlogy", "Malgun Gothic"]  # 글꼴 코드 (기본: Paperlogy)
 
 # 분석 전용 모드 결과를 수동 하이라이트 탭으로 넘길 때 쓰는 위젯 참조
 MANUAL_TAB = {}
@@ -144,9 +145,11 @@ STRINGS = {
         "shorts_mode_values": ["중앙 크롭 (기본)", "블러 배경"],
         "shorts_mode_hint": "(중앙 크롭: 화면 가운데 확대 / 블러 배경: 원본 그대로 + 위아래 블러)",
         "shorts_subtitles": "자막 자동 생성해 크게 새겨넣기 (Whisper)",
+        "shorts_font": "자막 글꼴",
         "shorts_font_size": "자막 크기",
         "shorts_sub_pos": "자막 위치",
         "shorts_sub_pos_values": ["하단 (기본)", "중앙", "상단"],
+        "font_values": ["페이퍼로지 (기본)", "맑은 고딕"],
         "btn_shorts": "쇼츠 만들기",
         "msg_shorts_done": ("쇼츠 영상이 저장되었습니다.\n\n폴더: {folder}\n\n"
                             "• _shorts.mp4  — 1080x1920 세로 영상"),
@@ -162,6 +165,7 @@ STRINGS = {
         "opt_intro": "썸네일 인트로 붙이기",
         "intro_sec": "인트로 길이 (초)",
         "opt_cover": "썸네일 표지(커버) 삽입",
+        "font": "자막 글꼴",
         "font_size": "자막 크기",
         "opt_burn": "자막 영상에 새겨넣기(하드섭)",
         "bgm_volume": "배경음악 볼륨 (0~1)",
@@ -282,9 +286,12 @@ STRINGS = {
         "shorts_mode_values": ["Center crop (default)", "Blur background"],
         "shorts_mode_hint": "(center crop: zoom into the middle / blur: full frame + blurred bars)",
         "shorts_subtitles": "Auto-generate big burned-in subtitles (Whisper)",
+        "shorts_font": "Subtitle font",
         "shorts_font_size": "Subtitle size",
         "shorts_sub_pos": "Subtitle position",
         "shorts_sub_pos_values": ["Bottom (default)", "Center", "Top"],
+        "font": "Subtitle font",
+        "font_values": ["Paperlogy (default)", "Malgun Gothic"],
         "btn_shorts": "Make Short",
         "msg_shorts_done": ("Short saved.\n\nFolder: {folder}\n\n"
                             "- _shorts.mp4  — 1080x1920 vertical video"),
@@ -300,6 +307,7 @@ STRINGS = {
         "opt_intro": "Add thumbnail intro",
         "intro_sec": "Intro length (s)",
         "opt_cover": "Embed thumbnail cover",
+        "font": "Subtitle font",
         "font_size": "Subtitle size",
         "opt_burn": "Burn subtitles (hardsub)",
         "bgm_volume": "BGM volume (0-1)",
@@ -757,6 +765,12 @@ def build_manual_tab(nb):
     labelpos_combo.grid(row=3, column=1, sticky="w", pady=(6, 3))
     _label(opt, "label_position_hint", row=3, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(6, 3))
 
+    _label(opt, "font", row=4, column=0, sticky="w", padx=(8, 4), pady=3)
+    font_combo = ttk.Combobox(opt, values=_t("font_values"), width=12, state="readonly")
+    font_combo.current(0)  # Paperlogy default
+    reg("combo", (font_combo, "font_values"), "font_values")
+    font_combo.grid(row=4, column=1, sticky="w", pady=3)
+
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_manual"))
     reg("var", btn_label_var, "btn_manual")
@@ -792,6 +806,7 @@ def build_manual_tab(nb):
         if name_var.get().strip():
             cmd += ["--name", name_var.get().strip()]
         cmd += ["--label-pos", WMPOS_CODES[max(labelpos_combo.current(), 0)]]
+        cmd += ["--font", FONT_CODES[max(font_combo.current(), 0)]]
         if subs_var.get():
             cmd += ["--subtitles",
                     "--model", MODEL_CODES[max(model_combo.current(), 0)],
@@ -921,6 +936,11 @@ def build_shorts_tab(nb):
     subpos_combo.current(0)  # bottom
     reg("combo", (subpos_combo, "shorts_sub_pos_values"), "shorts_sub_pos_values")
     subpos_combo.grid(row=2, column=1, sticky="w", pady=3)
+    _label(opt, "font", row=2, column=2, sticky="w", padx=(16, 4), pady=3)
+    font_combo = ttk.Combobox(opt, values=_t("font_values"), width=12, state="readonly")
+    font_combo.current(0)  # Paperlogy default
+    reg("combo", (font_combo, "font_values"), "font_values")
+    font_combo.grid(row=2, column=3, sticky="w", pady=3)
 
     subs_var = tk.BooleanVar(value=False)
     chk_subs = ttk.Checkbutton(opt, text=_t("shorts_subtitles"), variable=subs_var)
@@ -971,6 +991,7 @@ def build_shorts_tab(nb):
         if fontsize_var.get().strip():
             cmd += ["--font-size", fontsize_var.get().strip()]
         cmd += ["--sub-pos", SHORTS_SUBPOS_CODES[max(subpos_combo.current(), 0)]]
+        cmd += ["--font", FONT_CODES[max(font_combo.current(), 0)]]
         if subs_var.get():
             cmd += ["--subtitles",
                     "--model", MODEL_CODES[max(model_combo.current(), 0)],
@@ -1118,19 +1139,25 @@ def build_finalize_tab(nb):
     _label(opt, "font_size", row=1, column=2, sticky="w", padx=(16, 4), pady=3)
     ttk.Entry(opt, textvariable=font_size_var, width=6).grid(row=1, column=3, sticky="w", pady=3)
 
+    _label(opt, "font", row=2, column=0, sticky="w", padx=(8, 4), pady=3)
+    font_combo = ttk.Combobox(opt, values=_t("font_values"), width=12, state="readonly")
+    font_combo.current(0)  # Paperlogy default
+    reg("combo", (font_combo, "font_values"), "font_values")
+    font_combo.grid(row=2, column=1, sticky="w", pady=3)
+
     chk_burn = ttk.Checkbutton(opt, text=_t("opt_burn"), variable=burn_var)
     reg("text", chk_burn, "opt_burn")
-    chk_burn.grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=3)
-    _label(opt, "bgm_volume", row=2, column=2, sticky="w", padx=(16, 4), pady=3)
-    ttk.Entry(opt, textvariable=bgm_volume_var, width=6).grid(row=2, column=3, sticky="w", pady=3)
+    chk_burn.grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=3)
+    _label(opt, "bgm_volume", row=3, column=2, sticky="w", padx=(16, 4), pady=3)
+    ttk.Entry(opt, textvariable=bgm_volume_var, width=6).grid(row=3, column=3, sticky="w", pady=3)
 
     # 채널 마크(워터마크) 이미지 (선택) — 본영상에만 새겨진다
     watermark_var = tk.StringVar(value="")
-    _label(opt, "watermark", row=3, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
+    _label(opt, "watermark", row=4, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
     ttk.Entry(opt, textvariable=watermark_var, width=28).grid(
-        row=3, column=1, columnspan=2, sticky="ew", pady=(6, 3))
+        row=4, column=1, columnspan=2, sticky="ew", pady=(6, 3))
     wm_btns = ttk.Frame(opt)
-    wm_btns.grid(row=3, column=3, sticky="w", padx=(8, 4), pady=(6, 3))
+    wm_btns.grid(row=4, column=3, sticky="w", padx=(8, 4), pady=(6, 3))
     browse_wm = ttk.Button(
         wm_btns, text=_t("browse"),
         command=lambda: watermark_var.set(
@@ -1142,31 +1169,31 @@ def build_finalize_tab(nb):
     browse_wm.pack(side="left")
     ttk.Button(wm_btns, text="✕", width=3,
                command=lambda: watermark_var.set("")).pack(side="left", padx=(4, 0))
-    _label(opt, "wm_position", row=4, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
+    _label(opt, "wm_position", row=5, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
     wmpos_combo = ttk.Combobox(opt, values=_t("wm_pos_values"), width=10, state="readonly")
     wmpos_combo.current(1)  # tr = 우상단
     reg("combo", (wmpos_combo, "wm_pos_values"), "wm_pos_values")
-    wmpos_combo.grid(row=4, column=1, sticky="w", pady=(0, 3))
-    _label(opt, "watermark_hint", row=4, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(0, 3))
+    wmpos_combo.grid(row=5, column=1, sticky="w", pady=(0, 3))
+    _label(opt, "watermark_hint", row=5, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(0, 3))
 
-    _label(opt, "wm_colorkey", row=5, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
+    _label(opt, "wm_colorkey", row=6, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
     wmkey_combo = ttk.Combobox(opt, values=_t("wm_colorkey_values"), width=10, state="readonly")
     wmkey_combo.current(0)  # 없음
     reg("combo", (wmkey_combo, "wm_colorkey_values"), "wm_colorkey_values")
-    wmkey_combo.grid(row=5, column=1, sticky="w", pady=(0, 3))
-    _label(opt, "wm_colorkey_hint", row=5, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(0, 3))
+    wmkey_combo.grid(row=6, column=1, sticky="w", pady=(0, 3))
+    _label(opt, "wm_colorkey_hint", row=6, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # AI 자동 키워드 (Gemini) — 자막을 분석해 구간별 키워드를 마크 아래 표시
     autolabels_var = tk.BooleanVar(value=False)
     chk_labels = ttk.Checkbutton(opt, text=_t("auto_labels"), variable=autolabels_var)
     reg("text", chk_labels, "auto_labels")
-    chk_labels.grid(row=6, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 0))
-    _label(opt, "auto_labels_hint", row=6, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(8, 0))
-    _label(opt, "gemini_key", row=7, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
+    chk_labels.grid(row=7, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 0))
+    _label(opt, "auto_labels_hint", row=7, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(8, 0))
+    _label(opt, "gemini_key", row=8, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
     gemini_key_var = tk.StringVar(value=load_gemini_key())
     ttk.Entry(opt, textvariable=gemini_key_var, width=28, show="•").grid(
-        row=7, column=1, columnspan=2, sticky="ew", pady=(0, 3))
-    _label(opt, "gemini_key_hint", row=7, column=3, sticky="w", padx=(8, 4), pady=(0, 3))
+        row=8, column=1, columnspan=2, sticky="ew", pady=(0, 3))
+    _label(opt, "gemini_key_hint", row=8, column=3, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_finalize"))

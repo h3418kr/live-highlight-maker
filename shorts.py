@@ -29,6 +29,7 @@ from summarizer import (
     build_srt,
     get_duration,
     safe_filename,
+    copy_fonts_to,
 )
 from finalize import run_ffmpeg
 from manual_highlight import parse_ranges
@@ -98,7 +99,7 @@ def to_vertical(src: str, out_path: str, mode: str, ass_name: str = "",
     subtitles 필터 경로는 Windows 이스케이프가 까다로워 finalize 와 같은 방식으로
     자막 파일을 작업 폴더(cwd)에 두고 상대 경로로 참조한다.
     """
-    sub_filter = f",subtitles={ass_name}" if ass_name else ""
+    sub_filter = f",subtitles={ass_name}:fontsdir=." if ass_name else ""
 
     if mode == "blur":
         # 배경: 화면을 꽉 채운 뒤 블러 / 전경: 원본 비율 그대로 가운데 배치
@@ -148,7 +149,7 @@ def main():
     parser.add_argument("--lang", default="ko", help="자막 언어 코드 (기본 ko)")
     parser.add_argument("--prompt", default=GAME_PROMPT,
                         help="Whisper initial_prompt (전문 용어 힌트)")
-    parser.add_argument("--font", default="Malgun Gothic", help="자막 글꼴")
+    parser.add_argument("--font", default="Paperlogy", help="자막 글꼴")
     parser.add_argument("--font-size", type=int, default=54,
                         help="자막 크기 (1080x1920 실제 픽셀 기준, 기본 54)")
     parser.add_argument("--sub-pos", default="bottom", choices=list(SUB_POS.keys()),
@@ -242,6 +243,9 @@ def main():
 
         # 3) 세로 변환 + 자막 번인
         print(f"[{steps}/{steps}] 1080x1920 세로 변환...")
+        # Copy bundled fonts to tmpdir so libass can find them
+        if ass_name:
+            copy_fonts_to(tmpdir)
         to_vertical(flat, out_video, args.mode, ass_name=ass_name, cwd=tmpdir)
 
     print(f"\nDone!")
