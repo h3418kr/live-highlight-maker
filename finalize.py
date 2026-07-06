@@ -475,7 +475,7 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
              wm_scale: float = 0.12, wm_margin: int = 24,
              wm_colorkey: str = "", auto_labels: bool = False,
              gemini_key: str = "", gemini_model: str = GEMINI_MODEL,
-             label_size: int = 44) -> None:
+             label_size: int = 44, loudnorm: bool = False) -> None:
     video = os.path.abspath(video)
     out_path = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -556,6 +556,17 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
         concat_ts(ts_files, combined, tmp)
         stage = combined
 
+        # 5-1) 음량 정규화
+        if loudnorm:
+            print("[음량 정규화] loudnorm=I=-14:TP=-1.5:LRA=11 적용 중...", flush=True)
+            loudnorm_out = os.path.join(tmp, "loudnorm.mp4")
+            cmd = ["ffmpeg", "-i", stage, "-c:v", "copy",
+                   "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+                   "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+                   "-movflags", "+faststart", loudnorm_out]
+            run_ffmpeg(cmd, label="(음량 정규화)")
+            stage = loudnorm_out
+
         # 6) 표지(커버) 또는 최종 저장
         if cover and thumb:
             print(f"[표지] 썸네일 커버 삽입...", flush=True)
@@ -612,6 +623,8 @@ def main():
                     help=f"Gemini 모델명 (기본 {GEMINI_MODEL})")
     ap.add_argument("--label-size", type=int, default=44,
                     help="AI 키워드 라벨 글자 크기 (기본 44)")
+    ap.add_argument("--loudnorm", action="store_true",
+                    help="음량을 유튜브 표준(-14 LUFS)으로 정규화")
     ap.set_defaults(intro=True, cover=True, burn=True)
     args = ap.parse_args()
 
@@ -653,7 +666,8 @@ def main():
              wm_scale=args.wm_scale, wm_margin=args.wm_margin,
              wm_colorkey=args.wm_colorkey,
              auto_labels=args.auto_labels, gemini_key=args.gemini_key,
-             gemini_model=args.gemini_model, label_size=args.label_size)
+             gemini_model=args.gemini_model, label_size=args.label_size,
+             loudnorm=args.loudnorm)
 
 
 if __name__ == "__main__":

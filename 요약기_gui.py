@@ -9,6 +9,7 @@
 한/영 전환 버튼 제공 / KO-EN language toggle button.
 """
 import ctypes
+import json
 import os
 import queue
 import re
@@ -16,9 +17,13 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import urllib.request
+import webbrowser
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+APP_VERSION = "1.7.0"
 
 # ── sv-ttk availability check ─────────────────────────────────────────────────────
 try:
@@ -66,6 +71,7 @@ STRINGS = {
         "win_title": "라이브 하이라이트 메이커",
         "app_title": "라이브 하이라이트 메이커",
         "status_ready": "준비 완료",
+        "update_notify": "🔔 새 버전 v{VERSION}",
         "tab_summarize": "  영상 요약  ",
         "tab_finalize": "  완성 영상 만들기  ",
         "lang_button": "🌐 English",
@@ -190,6 +196,7 @@ STRINGS = {
         "font_size": "자막 크기",
         "opt_burn": "자막 영상에 새겨넣기(하드섭)",
         "bgm_volume": "배경음악 볼륨 (0~1)",
+        "opt_loudnorm": "음량 정규화 (유튜브 -14 LUFS)",
         "btn_finalize": "완성 영상 만들기",
         # file dialog titles
         "dlg_outdir": "출력 폴더 선택",
@@ -228,6 +235,7 @@ STRINGS = {
         "win_title": "Live Highlight Maker",
         "app_title": "Live Highlight Maker",
         "status_ready": "Ready",
+        "update_notify": "🔔 New version v{VERSION}",
         "tab_summarize": "  Summarize  ",
         "tab_finalize": "  Finalize  ",
         "lang_button": "🌐 한국어",
@@ -353,6 +361,7 @@ STRINGS = {
         "font_size": "Subtitle size",
         "opt_burn": "Burn subtitles (hardsub)",
         "bgm_volume": "BGM volume (0-1)",
+        "opt_loudnorm": "Normalize loudness (YouTube -14 LUFS)",
         "btn_finalize": "Make Final Video",
         # file dialog titles
         "dlg_outdir": "Select output folder",
@@ -1208,16 +1217,22 @@ def build_finalize_tab(nb):
     chk_burn = ttk.Checkbutton(opt, text=_t("opt_burn"), variable=burn_var)
     reg("text", chk_burn, "opt_burn")
     chk_burn.grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=3)
-    _label(opt, "bgm_volume", row=3, column=2, sticky="w", padx=(16, 4), pady=3)
-    ttk.Entry(opt, textvariable=bgm_volume_var, width=6).grid(row=3, column=3, sticky="w", pady=3)
+
+    loudnorm_var = tk.BooleanVar(value=False)
+    chk_loudnorm = ttk.Checkbutton(opt, text=_t("opt_loudnorm"), variable=loudnorm_var)
+    reg("text", chk_loudnorm, "opt_loudnorm")
+    chk_loudnorm.grid(row=3, column=2, columnspan=2, sticky="w", padx=(16, 4), pady=3)
+
+    _label(opt, "bgm_volume", row=4, column=0, sticky="w", padx=(8, 4), pady=3)
+    ttk.Entry(opt, textvariable=bgm_volume_var, width=6).grid(row=4, column=1, sticky="w", pady=3)
 
     # 채널 마크(워터마크) 이미지 (선택) — 본영상에만 새겨진다
     watermark_var = tk.StringVar(value="")
-    _label(opt, "watermark", row=4, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
+    _label(opt, "watermark", row=5, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
     ttk.Entry(opt, textvariable=watermark_var, width=28).grid(
-        row=4, column=1, columnspan=2, sticky="ew", pady=(6, 3))
+        row=5, column=1, columnspan=2, sticky="ew", pady=(6, 3))
     wm_btns = ttk.Frame(opt)
-    wm_btns.grid(row=4, column=3, sticky="w", padx=(8, 4), pady=(6, 3))
+    wm_btns.grid(row=5, column=3, sticky="w", padx=(8, 4), pady=(6, 3))
     browse_wm = ttk.Button(
         wm_btns, text=_t("browse"),
         command=lambda: watermark_var.set(
@@ -1229,31 +1244,31 @@ def build_finalize_tab(nb):
     browse_wm.pack(side="left")
     ttk.Button(wm_btns, text="✕", width=3,
                command=lambda: watermark_var.set("")).pack(side="left", padx=(4, 0))
-    _label(opt, "wm_position", row=5, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
+    _label(opt, "wm_position", row=6, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
     wmpos_combo = ttk.Combobox(opt, values=_t("wm_pos_values"), width=10, state="readonly")
     wmpos_combo.current(1)  # tr = 우상단
     reg("combo", (wmpos_combo, "wm_pos_values"), "wm_pos_values")
-    wmpos_combo.grid(row=5, column=1, sticky="w", pady=(0, 3))
-    _label(opt, "watermark_hint", row=5, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(0, 3))
+    wmpos_combo.grid(row=6, column=1, sticky="w", pady=(0, 3))
+    _label(opt, "watermark_hint", row=6, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(0, 3))
 
-    _label(opt, "wm_colorkey", row=6, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
+    _label(opt, "wm_colorkey", row=7, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
     wmkey_combo = ttk.Combobox(opt, values=_t("wm_colorkey_values"), width=10, state="readonly")
     wmkey_combo.current(0)  # 없음
     reg("combo", (wmkey_combo, "wm_colorkey_values"), "wm_colorkey_values")
-    wmkey_combo.grid(row=6, column=1, sticky="w", pady=(0, 3))
-    _label(opt, "wm_colorkey_hint", row=6, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(0, 3))
+    wmkey_combo.grid(row=7, column=1, sticky="w", pady=(0, 3))
+    _label(opt, "wm_colorkey_hint", row=7, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # AI 자동 키워드 (Gemini) — 자막을 분석해 구간별 키워드를 마크 아래 표시
     autolabels_var = tk.BooleanVar(value=False)
     chk_labels = ttk.Checkbutton(opt, text=_t("auto_labels"), variable=autolabels_var)
     reg("text", chk_labels, "auto_labels")
-    chk_labels.grid(row=7, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 0))
-    _label(opt, "auto_labels_hint", row=7, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(8, 0))
-    _label(opt, "gemini_key", row=8, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
+    chk_labels.grid(row=8, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 0))
+    _label(opt, "auto_labels_hint", row=8, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(8, 0))
+    _label(opt, "gemini_key", row=9, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
     gemini_key_var = tk.StringVar(value=load_gemini_key())
     ttk.Entry(opt, textvariable=gemini_key_var, width=28, show="•").grid(
-        row=8, column=1, columnspan=2, sticky="ew", pady=(0, 3))
-    _label(opt, "gemini_key_hint", row=8, column=3, sticky="w", padx=(8, 4), pady=(0, 3))
+        row=9, column=1, columnspan=2, sticky="ew", pady=(0, 3))
+    _label(opt, "gemini_key_hint", row=9, column=3, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_finalize"))
@@ -1310,6 +1325,10 @@ def build_finalize_tab(nb):
             wmkey = WMKEY_CODES[max(wmkey_combo.current(), 0)]
             if wmkey:
                 cmd += ["--wm-colorkey", wmkey]
+
+        # 음량 정규화
+        if loudnorm_var.get():
+            cmd += ["--loudnorm"]
 
         # AI 자동 키워드 (Gemini)
         gkey = gemini_key_var.get().strip()
@@ -1682,6 +1701,39 @@ def main():
     build_shorts_tab(nb)
     build_autoshorts_tab(nb)
     build_finalize_tab(nb)
+
+    # Background update check thread
+    def check_for_update():
+        try:
+            url = "https://api.github.com/repos/h3418kr/youtube-summarizer-editor/releases/latest"
+            req = urllib.request.Request(url, headers={"User-Agent": "Claude-App"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                remote_tag = data.get("tag_name", "").lstrip("v")
+                if not remote_tag:
+                    return
+                remote_ver = tuple(map(int, remote_tag.split(".")))
+                local_ver = tuple(map(int, APP_VERSION.split(".")))
+                if remote_ver > local_ver:
+                    root.update_version = remote_tag
+                    root.after(0, show_update_notification)
+        except Exception:
+            pass
+
+    def show_update_notification():
+        if not hasattr(root, "update_version"):
+            return
+        version = root.update_version
+        text = _t("update_notify").replace("{VERSION}", version) if "update_notify" in STRINGS[STATE["lang"]] else f"New version v{version}"
+        notif_label = ttk.Label(
+            header, text=text, foreground="#0078d4", cursor="hand2"
+        )
+        notif_label.pack(side="left", padx=4)
+        def on_click(*_):
+            webbrowser.open("https://github.com/h3418kr/youtube-summarizer-editor/releases/latest")
+        notif_label.bind("<Button-1>", on_click)
+
+    threading.Thread(target=check_for_update, daemon=True).start()
 
     # Enable Windows dark title bar (Windows 10+)
     try:
