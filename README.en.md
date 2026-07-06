@@ -27,7 +27,7 @@ It was built with game-stream highlight editing in mind, but works just as well 
 
 ## ✨ Key features
 
-The GUI (`요약기_gui.py`) has four tabs. A **KO/EN language toggle button (🌐)** sits in the top-right corner so you can switch the interface language anytime.
+The GUI (`요약기_gui.py`) has five tabs. A **KO/EN language toggle button (🌐)** sits in the top-right corner so you can switch the interface language anytime.
 
 ### 1️⃣ Summarize tab — turn a stream into highlights
 
@@ -37,6 +37,7 @@ The GUI (`요약기_gui.py`) has four tabs. A **KO/EN language toggle button (�
 - Turn on **"Analyze candidates only"** to skip building the video and just extract candidate highlight ranges quickly — they are **auto-loaded into the Manual highlights tab** so you can review and adjust them before building.
 - Lets you add **screen transitions** (none / fade to black / white flash) and **transition SFX** (none / whoosh / swoosh / beep / pop / impact) between highlights.
 - Set a **keep-original folder** and the downloaded source video is preserved instead of deleted → you can re-edit it later in the **Manual highlights tab**.
+- **Auto silence cutting (jump cuts)** option removes silent gaps to tighten pacing. (Subtitles are auto-regenerated to stay in sync.)
 - Output: `title_summary.mp4` (summary video), `title_summary.srt` (subtitles), `title_chapters.txt` (YouTube chapters)
 
 ### 2️⃣ Manual highlights tab — your video + your chosen ranges
@@ -45,19 +46,29 @@ The GUI (`요약기_gui.py`) has four tabs. A **KO/EN language toggle button (�
 - Enter one range per line as `start - end`. `SS` / `MM:SS` / `HH:MM:SS` are all supported, e.g. `1:23 - 2:05`, `83 - 125`, `00:01:23,000 --> 00:02:05,000` (SRT style).
 - Add `| subtitle` after any line (e.g. `1:23 - 2:05 | Downgrade`) to show a **subtitle** in a screen corner during that highlight (position selectable).
 - Just like the Summarize tab, you can add **transitions / SFX**, and optionally auto-generate **subtitles (SRT)**.
+- **Auto silence cutting (jump cuts)** option removes silent gaps to tighten pacing. (Subtitles are auto-regenerated to stay in sync.)
 - Output: `name_highlight.mp4`, `name_highlight.srt` (when subtitles are on), `name_chapters.txt` (YouTube chapters)
 
 ### 3️⃣ Shorts tab — pick a scene, get a 9:16 vertical video
 
 - Pick any range(s) from a video and export a **1080x1920 vertical short** (YouTube Shorts / Instagram Reels / TikTok spec).
-- Two vertical modes: **center crop** (zoom into the middle) or **blur background** (full frame + blurred bars).
+- Five vertical modes: **smart auto (recommended)** (analyzes motion and frames the action automatically) / **center crop** (zoom into the middle) / **left crop** / **right crop** / **blur background** (full frame + blurred bars).
 - Turn on **auto subtitles** to burn in Whisper captions in the **big bold shorts style**. Both the caption **size** and **position (bottom / center / top)** are adjustable so they don't cover the footage.
 - Multiple ranges are hard-cut together. (3 minutes total max recommended.)
 - Output: `name_shorts.mp4` (vertical video), `name_shorts.srt` (when subtitles are on)
 
-### 4️⃣ Finalize tab — polish it for upload
+### 4️⃣ Auto Shorts tab — 1 video → many shorts automatically
 
-- Combines your **summary video + subtitles (SRT) + thumbnail** into a single finished mp4.
+- **Paste a VOD URL** or **load a video file**, and it auto-detects the top-N highlights and **generates multiple 9:16 vertical shorts in one go**.
+- Set the **number of shorts** (N) and **length per short** (seconds), and it finds the audio-energy peaks and auto-converts them to vertical shorts.
+- Pick a vertical mode (smart auto recommended) and it applies to all shorts.
+- **Auto subtitles** on/off, **subtitle position, size**, and **font** are adjustable.
+- **Add AI titles (Gemini)** option: AI analyzes each short's audio and auto-generates a title to burn into the video. (needs free Gemini API key)
+- Output: `name_short_01.mp4`, `name_short_02.mp4`, … (+ `.srt` subtitle files)
+
+### 5️⃣ Finalize tab — polish it for upload
+
+- Combines your **summary video + subtitles (SRT) + thumbnail (+ optional intro/outro/BGM/logo)** into a single finished mp4.
 - **Burns subtitles into** the picture (hardsub) → they show up on any player.
 - Uses the thumbnail as an **① intro clip** at the front and also embeds it as **② the mp4 cover art**.
 - Lets you attach a separate **intro / outro video** (a standalone mp4) before and after the main clip. Even with different resolution/aspect ratio, it's auto-converted to the main clip's spec and stitched in.
@@ -122,6 +133,7 @@ Below is the actual program screen. Just follow the numbers.
 | Transition | Between highlights: none / fade to black / white flash | `fade to black` |
 | Transition SFX | SFX at the transition: none / whoosh / swoosh / beep / pop / impact | `whoosh` |
 | Keep-original folder | Folder to preserve the downloaded source video (empty = delete after processing) | empty |
+| Auto silence cutting | Remove silent gaps to tighten pacing (subtitles auto-regenerated) | off |
 | Analyze candidates only | Skip building the video; extract candidate ranges and **auto-fill the Manual highlights tab** (skips Whisper, so it's fast) | off |
 
 **Button: click "Download & Summarize"** → download → analyze → edit, all automatic.
@@ -151,6 +163,7 @@ Use this when you want to build a summary from a **video file you already have**
 | Highlight ranges | One `start - end` per line (optional `| subtitle` after it) | — |
 | Transition / SFX | Same as the Summarize tab | `fade to black` / `whoosh` |
 | Subtitle position | Corner where the `| subtitle` text appears | `Top-right` |
+| Auto silence cutting | Remove silent gaps to tighten pacing (subtitles auto-regenerated) | off |
 | Generate subtitles | Auto-generate Whisper subtitles (SRT) from the result on/off | off |
 
 Range input supports `SS` / `MM:SS` / `HH:MM:SS`, with an optional `| subtitle`:
@@ -181,12 +194,45 @@ Pick one great scene from a landscape video and turn it into a **9:16 vertical v
 |------|------|--------|
 | Video file | Select the source (or summary) local video | — |
 | Shorts ranges | One `start - end` per line (multiple lines are hard-cut together; 3 min total max recommended) | — |
-| Vertical mode | Center crop (zoom middle) / blur background (full frame + blurred bars) | `center crop` |
+| Vertical mode | Smart auto (recommended) / center crop / left crop / right crop / blur background | `smart auto` |
 | Subtitle size | Size of the burned-in captions (in real 1080x1920 pixels) | `54` |
 | Subtitle position | Vertical position of the captions: bottom / center / top | `bottom` |
+| Subtitle font | Font: Paperlogy / Malgun Gothic | `Paperlogy` |
 | Auto subtitles | Burn in big bold Whisper captions on/off | off |
 
 **Button: click "Make Short"** → `name_shorts.mp4` (1080x1920 vertical) is created.
+
+---
+
+### STEP 1-D — Auto Shorts tab (1 video → many shorts automatically)
+
+Generate multiple vertical shorts from a single video's highlights in one pass. Great for rapidly creating short-form content.
+
+<div align="center">
+<img src="assets/ui-autoshorts.en.png" alt="Auto Shorts tab guide" width="100%">
+</div>
+
+| Item | Description | Default |
+|------|------|--------|
+| URL or local file | VOD address or select a local video file to create shorts from | — |
+| Number of shorts | How many shorts to generate (N) | `5` |
+| Length per short (s) | Duration of each short | `30` s |
+| Output folder | Where result files are saved | `output` |
+| Output name (optional) | Result file name (empty = use source filename) | empty |
+| Vertical mode | Smart auto (recommended) / center crop / left crop / right crop / blur background | `smart auto` |
+| Auto-generate & burn subtitles (Whisper) | Burn Whisper subtitles into the video on/off | off |
+| Whisper model | Subtitle accuracy (bigger = more accurate, slower) | `small` recommended |
+| Language | Spoken language | `ko` (Korean) |
+| Subtitle position | Vertical position of the captions: bottom / center / top | `bottom` |
+| Subtitle font | Font: Paperlogy / Malgun Gothic | `Paperlogy` |
+| Subtitle size | Size of the burned-in captions (in real 1080x1920 pixels) | `54` |
+| Add AI titles (Gemini) | AI analyzes audio and auto-generates title text to display on/off | off |
+| Gemini API key | Paste a free key (saved after first use). See how to get one below | — |
+
+**Button: click "Make Auto Shorts"** → auto-detect highlights → generate N shorts
+When finished, output folder contains:
+- `name_short_01.mp4`, `name_short_02.mp4`, … (vertical shorts)
+- `name_short_01.srt`, `name_short_02.srt`, … (subtitle files, when subtitles are on)
 
 ---
 
@@ -234,6 +280,7 @@ Combine the summary video + (edited) subtitles + thumbnail image into an upload-
 | Output file | Where the final file is saved |
 | Intro length (s) | How many seconds the thumbnail shows at the front (default `2.5`s) |
 | Subtitle size | Font size of the burned-in subtitles (default `24`) |
+| Subtitle font | Font: Paperlogy / Malgun Gothic |
 | BGM volume | BGM level (0–1), relative to speech (default `0.25`) |
 | Add intro | Use the thumbnail as the opening scene on/off |
 | Insert cover | Embed the thumbnail as album-art-style cover in the mp4 on/off |
@@ -289,10 +336,11 @@ python 요약기_gui.py        # or double-click 요약기_실행.bat
 ## 📁 Repository layout
 
 ```
-├── 요약기_gui.py       # GUI (four tabs: Summarize · Manual highlights · Shorts · Finalize)
+├── 요약기_gui.py       # GUI (five tabs: Summarize · Manual highlights · Shorts · Auto Shorts · Finalize)
 ├── summarizer.py       # stream-highlight summarization engine (+analyze-only mode)
 ├── manual_highlight.py # local video + manual time ranges → highlight video
 ├── shorts.py           # ranges → 9:16 vertical short
+├── batch_shorts.py     # video → auto-find highlights → generate N shorts
 ├── finalize.py         # combine video + subtitles + thumbnail + BGM
 ├── 요약기_실행.bat    # Windows launcher (system Python)
 ├── 사용설명서.txt     # portable-build user manual (Korean)
