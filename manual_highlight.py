@@ -35,6 +35,7 @@ from summarizer import (
     build_srt,
     get_duration,
     safe_filename,
+    silence_cut,
 )
 
 
@@ -135,6 +136,8 @@ def main():
                         help="하이라이트 소제목 글자 크기 (기본 40)")
     parser.add_argument("--font", default="Paperlogy",
                         help="소제목 글꼴 (기본 Paperlogy)")
+    parser.add_argument("--jump-cut", action="store_true",
+                        help="무음 구간 자동 컷(점프컷)으로 템포를 높입니다")
     args = parser.parse_args()
 
     if args.no_transition:
@@ -209,12 +212,25 @@ def main():
 
     use_overlay = bool(label_windows)
 
+    # Jump-cut changes timing, so label_windows (overlay) timings would be incorrect.
+    # Disable jump-cut if labels are present.
+    if args.jump_cut and use_overlay:
+        print(f"  (소제목이 있으면 점프컷 비활성화 - 오버레이 타이밍 보존)")
+        args.jump_cut = False
+
     with tempfile.TemporaryDirectory(prefix="manual_hl_") as tmpdir:
         # 소제목이 있으면 먼저 원본 컷을 임시로 만들고 오버레이를 입힌다.
         base_video = os.path.join(tmpdir, "highlight_raw.mp4") if use_overlay else out_video
         cut_and_concat(args.video, segments, base_video, tmpdir,
                        transition_style=args.transition_style,
                        sfx_kind=args.sfx_kind)
+
+        # Apply jump-cut if requested
+        if args.jump_cut:
+            base_video_cut = os.path.join(tmpdir, "highlight_cut.mp4")
+            cut_happened = silence_cut(base_video, base_video_cut, tmpdir)
+            if cut_happened:
+                base_video = base_video_cut
 
         if args.subtitles:
             print(f"[2/3] 완성 영상에서 오디오 추출...")

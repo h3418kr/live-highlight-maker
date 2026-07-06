@@ -762,6 +762,121 @@ def cut_and_concat(video_path: str, segments: List[Tuple[float, float]], out_pat
 
 
 
+def silence_cut(video_path: str, out_path: str, tmpdir: str, threshold_db: float = -30.0,
+                min_silence: float = 0.4, keep_pad: float = 0.06) -> bool:
+    """Detect silent gaps and remove them (jump cut) to tighten pacing.
+
+    Algorithm:
+    1. Run ffmpeg silencedetect to find silence_start/silence_end events
+    2. Invert silence list to get "keep" (non-silent) segments
+    3. Add keep_pad to segment boundaries (soften cuts), clamp to [0, duration]
+    4. Merge segments closer than ~0.15s and drop segments < ~0.30s
+    5. If nothing to cut (kept ≈ full duration, or 0/1 segments), return False (no-op)
+    6. Otherwise cut_and_concat() the kept segments and return True
+
+    Returns: True if silence was cut, False if no significant silence found (original unchanged).
+    Prints summary: original duration → kept duration, % removed.
+    Never crashes: wrap detection in try/except, fall back to False on any error.
+    """
+    try:
+        # Get video duration
+        dur = get_duration(video_path)
+
+        # Run silencedetect filter to find silence boundaries
+        cmd = [
+            "ffmpeg", "-i", os.path.abspath(video_path),
+            "-af", f"silencedetect=noise={threshold_db}dB:d={min_silence}",
+            "-f", "null", "-"
+        ]
+
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace",
+            **_PROC_KW
+        )
+        _, stderr = proc.communicate()
+
+        if proc.returncode != 0:
+            return False
+
+        # Parse silence_start and silence_end lines from ffmpeg stderr
+        # Example: "silence_start: 1.234" and "silence_end: 2.345"
+        silence_intervals = []
+        lines = (stderr or "").split("\n")
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if "silence_start:" in line:
+                try:
+                    start_str = line.split("silence_start:")[-1].strip()
+                    start = float(start_str)
+                    # Look for corresponding silence_end in next few lines
+                    end = None
+                    for j in range(i+1, min(i+5, len(lines))):
+                        if "silence_end:" in lines[j]:
+                            end_str = lines[j].split("silence_end:")[-1].strip()
+                            end = float(end_str)
+                            break
+                    if end is not None:
+                        silence_intervals.append((max(0.0, start), min(dur, end)))
+                        i = j
+                    else:
+                        i += 1
+                except (ValueError, IndexError):
+                    i += 1
+            else:
+                i += 1
+
+        # Build "keep" segments = inverse of silence intervals
+        keep_segments = []
+        last_end = 0.0
+        for sil_start, sil_end in sorted(silence_intervals):
+            if sil_start > last_end:
+                keep_segments.append((last_end, sil_start))
+            last_end = max(last_end, sil_end)
+        if last_end < dur:
+            keep_segments.append((last_end, dur))
+
+        # Apply keep_pad softening and clamp
+        padded = []
+        for seg_start, seg_end in keep_segments:
+            new_start = max(0.0, seg_start - keep_pad)
+            new_end = min(dur, seg_end + keep_pad)
+            padded.append((new_start, new_end))
+
+        # Merge nearby segments (within 0.15s) and drop very short ones (< 0.30s)
+        merged = []
+        for start, end in sorted(padded):
+            if end - start < 0.30:
+                continue
+            if merged and start - merged[-1][1] < 0.15:
+                # Merge with previous
+                merged[-1] = (merged[-1][0], end)
+            else:
+                merged.append((start, end))
+
+        # Check if there's actually silence to remove
+        total_kept = sum(e - s for s, e in merged)
+
+        # If we kept almost everything or have 0/1 segments, skip cutting
+        if not merged or len(merged) <= 1 or abs(total_kept - dur) < 0.5:
+            return False
+
+        # Cut and concatenate
+        cut_and_concat(video_path, merged, out_path, tmpdir,
+                       transition_style="none", sfx_kind="none")
+
+        # Print summary
+        pct = (1.0 - total_kept / dur) * 100.0 if dur > 0 else 0.0
+        print(f"  (무음 구간 제거: {dur:.1f}s → {total_kept:.1f}s, -{pct:.1f}%)")
+
+        return True
+
+    except Exception as e:
+        # Fall back gracefully on any error
+        return False
+
+
 def safe_filename(title: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "_", title)[:80]
 
@@ -810,6 +925,8 @@ def main():
                         help="영상을 만들지 않고 하이라이트 후보 구간만 분석해 "
                              "구간 목록 파일(_segments.txt)로 저장합니다. "
                              "자막 전사(Whisper)를 건너뛰어 훨씬 빠릅니다.")
+    parser.add_argument("--jump-cut", action="store_true",
+                        help="무음 구간 자동 컷(점프컷)으로 템포를 높입니다")
     args = parser.parse_args()
 
     if args.no_transition:
@@ -917,13 +1034,34 @@ def main():
         v_name = TRANSITION_STYLES.get(args.transition_style, args.transition_style)
         s_name = SFX_SPECS.get(args.sfx_kind, (None, None, 0, args.sfx_kind))[3]
         print(f"[6/6] Cutting and concatenating segments... (화면전환: {v_name} / 효과음: {s_name})")
-        cut_and_concat(video_path, segments, out_video, tmpdir,
+
+        # Build raw summary first (without jump-cut)
+        summary_raw = os.path.join(tmpdir, "summary_raw.mp4")
+        cut_and_concat(video_path, segments, summary_raw, tmpdir,
                        transition_style=args.transition_style, sfx_kind=args.sfx_kind)
 
+        # Apply jump-cut if requested
+        summary_video = summary_raw
+        srt_segments = segments  # segments list for SRT (may change if jump-cut happens)
+        if args.jump_cut:
+            summary_cut = os.path.join(tmpdir, "summary_cut.mp4")
+            cut_happened = silence_cut(summary_raw, summary_cut, tmpdir)
+            if cut_happened:
+                summary_video = summary_cut
+                # Re-generate SRT if subtitles are on (jump-cut changes timing)
+                wav_path_cut = os.path.join(tmpdir, "audio_cut.wav")
+                extract_audio(summary_video, wav_path_cut)
+                whisper_result = transcribe(wav_path_cut, args.model, args.lang, args.prompt)
+                # For SRT, use full video duration since segments no longer align
+                srt_segments = [(0.0, get_duration(summary_video))]
+
         print(f"[7/7] Building subtitles...")
-        srt_content = build_srt(whisper_result, segments)
+        srt_content = build_srt(whisper_result, srt_segments)
         with open(out_srt, "w", encoding="utf-8") as f:
             f.write(srt_content)
+
+        # Copy final summary video to output
+        shutil.copy2(summary_video, out_video)
 
         # 유튜브 챕터 텍스트: 설명란에 그대로 붙여넣으면 챕터가 생긴다.
         out_chapters = str(output_dir / f"{safe_title}_chapters.txt")

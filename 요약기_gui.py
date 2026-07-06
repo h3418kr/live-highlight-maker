@@ -114,6 +114,8 @@ STRINGS = {
         "label_position_hint": "(‘시작-끝 | 소제목’으로 입력한 소제목이 뜨는 자리)",
         "analyze_only": "구간 후보만 분석 (영상은 만들지 않음 — 빠름)",
         "analyze_hint": "(분석이 끝나면 후보 구간이 수동 하이라이트 탭에 자동으로 채워집니다)",
+        "jump_cut": "무음 구간 자동 컷 (점프컷)",
+        "jump_cut_hint": "(말 없는 구간을 잘라 템포를 높입니다 — 자막은 자동 재생성)",
         "msg_analyze_done": ("하이라이트 후보 분석 완료!\n\n"
                              "후보 구간 목록을 수동 하이라이트 탭에 불러왔습니다.\n"
                              "구간을 확인·수정한 뒤 「하이라이트 만들기」를 누르세요."),
@@ -255,6 +257,8 @@ STRINGS = {
         "label_position_hint": "(where the 'start-end | subtitle' text appears)",
         "analyze_only": "Analyze candidates only (no video output — fast)",
         "analyze_hint": "(when done, the candidate ranges are loaded into the Manual highlights tab)",
+        "jump_cut": "Remove silent gaps (Jump cut)",
+        "jump_cut_hint": "(tighten pacing by cutting silent pauses — subtitles auto-regenerated)",
         "msg_analyze_done": ("Highlight analysis finished!\n\n"
                              "The candidate ranges were loaded into the Manual highlights tab.\n"
                              "Review / adjust them, then click \"Make highlights\"."),
@@ -586,6 +590,13 @@ def build_summarizer_tab(nb):
     chk_analyze.grid(row=8, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
     _label(opt, "analyze_hint", row=9, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
+    # 무음 구간 자동 컷 (점프컷)
+    jump_cut_var = tk.BooleanVar(value=False)
+    chk_jump_cut = ttk.Checkbutton(opt, text=_t("jump_cut"), variable=jump_cut_var)
+    reg("text", chk_jump_cut, "jump_cut")
+    chk_jump_cut.grid(row=10, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "jump_cut_hint", row=11, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_summarize"))
     reg("var", btn_label_var, "btn_summarize")
@@ -621,6 +632,8 @@ def build_summarizer_tab(nb):
         analyze_mode = analyze_var.get()
         if analyze_mode:
             cmd.append("--analyze-only")
+        if jump_cut_var.get():
+            cmd.append("--jump-cut")
 
         log.config(state="normal")
         log.delete("1.0", tk.END)
@@ -771,15 +784,22 @@ def build_manual_tab(nb):
     reg("combo", (font_combo, "font_values"), "font_values")
     font_combo.grid(row=4, column=1, sticky="w", pady=3)
 
+    # 무음 구간 자동 컷 (점프컷)
+    man_jump_cut_var = tk.BooleanVar(value=False)
+    chk_man_jump_cut = ttk.Checkbutton(opt, text=_t("jump_cut"), variable=man_jump_cut_var)
+    reg("text", chk_man_jump_cut, "jump_cut")
+    chk_man_jump_cut.grid(row=5, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "jump_cut_hint", row=6, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_manual"))
     reg("var", btn_label_var, "btn_manual")
     run_btn = ttk.Button(frame, textvariable=btn_label_var, style="Accent.TButton")
-    run_btn.grid(row=7, column=0, columnspan=3, padx=12, pady=8, sticky="ew")
+    run_btn.grid(row=9, column=0, columnspan=3, padx=12, pady=8, sticky="ew")
 
     # 로그
     log = make_log(frame)
-    log.grid(row=8, column=0, columnspan=3, sticky="nsew", padx=12, pady=(0, 12))
+    log.grid(row=10, column=0, columnspan=3, sticky="nsew", padx=12, pady=(0, 12))
 
     def on_run():
         video = video_var.get().strip()
@@ -807,6 +827,8 @@ def build_manual_tab(nb):
             cmd += ["--name", name_var.get().strip()]
         cmd += ["--label-pos", WMPOS_CODES[max(labelpos_combo.current(), 0)]]
         cmd += ["--font", FONT_CODES[max(font_combo.current(), 0)]]
+        if man_jump_cut_var.get():
+            cmd.append("--jump-cut")
         if subs_var.get():
             cmd += ["--subtitles",
                     "--model", MODEL_CODES[max(model_combo.current(), 0)],
