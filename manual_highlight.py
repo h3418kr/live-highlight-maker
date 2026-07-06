@@ -96,6 +96,12 @@ def parse_ranges(text: str) -> List[Tuple[float, float]]:
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(
         description="로컬 영상 + 수동 하이라이트 시간대 -> 요약 영상")
     parser.add_argument("video", help="로컬 영상 파일 경로")

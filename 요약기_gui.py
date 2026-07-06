@@ -375,6 +375,7 @@ def run_script(cmd, log_widget, done_cb, status_var=None):
 
     def worker():
         try:
+            env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -383,6 +384,7 @@ def run_script(cmd, log_widget, done_cb, status_var=None):
                 encoding="utf-8",
                 errors="replace",
                 cwd=SCRIPT_DIR,
+                env=env,
             )
             for line in proc.stdout:
                 q.put(("log", line))

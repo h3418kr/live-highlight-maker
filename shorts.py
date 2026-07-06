@@ -122,6 +122,12 @@ def to_vertical(src: str, out_path: str, mode: str, ass_name: str = "",
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(
         description="로컬 영상 + 구간 -> 쇼츠(9:16 세로) 영상")
     parser.add_argument("video", help="로컬 영상 파일 경로")

@@ -534,6 +534,12 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     ap = argparse.ArgumentParser(description="영상+자막+썸네일 → 완성 영상")
     ap.add_argument("video", help="영상 파일 (mp4 등)")
     ap.add_argument("srt", help="자막 파일 (.srt)")

@@ -724,6 +724,12 @@ def safe_filename(title: str) -> str:
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="YouTube video summarizer - extracts high-energy segments")
     parser.add_argument("url", help="YouTube URL 또는 로컬 영상 파일 경로")
     parser.add_argument("--target-min", type=float, default=10.0, help="Target summary length in minutes (default: 10)")
