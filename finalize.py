@@ -139,7 +139,9 @@ def prep_clip(clip: str, w: int, h: int, fps: str, out_ts: str,
 WM_POSITIONS = {"tl": "좌상단", "tr": "우상단", "bl": "좌하단", "br": "우하단"}
 
 # ── AI 자동 키워드(Gemini) ─────────────────────────────────────────────────────
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
+# 모델이 404(지원종료)/429(할당량)면 자동으로 아래 모델로 대체 시도한다.
+GEMINI_FALLBACK = "gemini-flash-latest"
 
 
 def _media_wh(path: str):
@@ -220,38 +222,47 @@ def gemini_labels(srt_path: str, api_key: str, model: str = GEMINI_MODEL):
                 "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT")
         ],
     }
-    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{model}:generateContent?key={api_key}")
     body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=body, headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            raw = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        detail = ""
+
+    # 지정 모델 -> (404/429면) 대체 모델 순으로 시도
+    candidates = [model] + ([GEMINI_FALLBACK] if model != GEMINI_FALLBACK else [])
+    last_err = "알 수 없는 오류"
+    for mdl in candidates:
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{mdl}:generateContent?key={api_key}")
+        req = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"})
         try:
-            detail = e.read().decode("utf-8")[:300]
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = e.read().decode("utf-8")[:200]
+            except Exception:
+                pass
+            last_err = f"HTTP {e.code} ({mdl})"
+            if e.code in (404, 429):   # 모델 미지원/할당량 -> 다음 후보 시도
+                print(f"  ({mdl}: {e.code} - 다른 모델로 재시도)", flush=True)
+                continue
+            print(f"  (Gemini 요청 실패 {last_err}: {detail})", flush=True)
+            return []
+        except Exception as e:
+            print(f"  (Gemini 연결 실패: {e})", flush=True)
+            return []
+        try:
+            data = json.loads(raw)
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
         except Exception:
-            pass
-        print(f"  (Gemini 요청 실패 HTTP {e.code}: {detail})", flush=True)
-        return []
-    except Exception as e:
-        print(f"  (Gemini 연결 실패: {e})", flush=True)
-        return []
-    try:
-        data = json.loads(raw)
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception:
-        print(f"  (Gemini 응답 형식이 예상과 다름: {raw[:300]})", flush=True)
-        return []
-    labels = _parse_label_lines(text)
-    if labels:
-        print(f"  Gemini 키워드 {len(labels)}개 생성", flush=True)
-    else:
-        one = " / ".join(text.splitlines())[:200]
-        print(f"  (Gemini 응답에서 키워드 파싱 실패. 실제 응답: {one})", flush=True)
-    return labels
+            last_err = f"응답 형식 이상 ({mdl})"
+            continue
+        labels = _parse_label_lines(text)
+        if labels:
+            print(f"  Gemini 키워드 {len(labels)}개 생성 (모델 {mdl})", flush=True)
+            return labels
+        last_err = "응답에서 키워드 파싱 실패: " + " / ".join(text.splitlines())[:150]
+    print(f"  (Gemini 키워드 생성 실패: {last_err})", flush=True)
+    return []
 
 
 def _ass_ts(sec: float) -> str:
