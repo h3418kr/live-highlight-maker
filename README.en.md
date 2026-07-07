@@ -9,7 +9,7 @@
 **A video tool that automatically analyzes long live-stream VODs, extracts only the best moments (highlights),**
 **and layers on subtitles, transitions and background music to produce an upload-ready finished video.**
 
-Powered by faster-whisper speech recognition for rapid subtitles (3x faster than before) · **GPU-accelerated encoding (auto-detected)** and ffmpeg · comes with a **graphical UI (GUI)** so you don't need to know Python · **modern dark theme with Windows 11 styling (sv-ttk)** · **automatic update notifications**
+Powered by faster-whisper speech recognition for rapid subtitles (3x faster than before) · **GPU-accelerated encoding (auto-detected)** · **closeup transitions (auto-detect camera)** and ffmpeg · comes with a **graphical UI (GUI)** so you don't need to know Python · **modern dark theme with Windows 11 styling (sv-ttk)** · **automatic update notifications**
 
 </div>
 
@@ -131,7 +131,8 @@ Below is the actual program screen. Just follow the numbers.
 | Pre-peak extend (s) | Extra time added before each highlight start | `5` s |
 | Post-peak extend (s) | Extra time added after each highlight end | `20` s |
 | Scene merge (s) | Segments closer than this are stitched smoothly | `8` s |
-| Transition | Between highlights: none / fade to black / white flash | `fade to black` |
+| Transition | Between highlights: none / fade to black / white flash / **closeup (camera zoom)** | `fade to black` |
+| Camera position | For closeup transitions: **auto-detect** (default) / bottom-right / bottom-left / top-right / top-left | `auto-detect` |
 | Transition SFX | SFX at the transition: none / whoosh / swoosh / beep / pop / impact | `whoosh` |
 | Keep-original folder | Folder to preserve the downloaded source video (empty = delete after processing) | empty |
 | GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
@@ -163,7 +164,8 @@ Use this when you want to build a summary from a **video file you already have**
 | Output folder | Where the result files are saved | `output` |
 | Output name | Result file name (empty = use source filename) | empty |
 | Highlight ranges | One `start - end` per line (optional `| subtitle` after it) | — |
-| Transition / SFX | Same as the Summarize tab | `fade to black` / `whoosh` |
+| Transition / SFX | Same as the Summarize tab (includes closeup) | `fade to black` / `whoosh` |
+| Camera position | For closeup transitions: **auto-detect** (default) / bottom-right / bottom-left / top-right / top-left | `auto-detect` |
 | Subtitle position | Corner where the `| subtitle` text appears | `Top-right` |
 | GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
 | Auto silence cutting | Remove silent gaps to tighten pacing (subtitles auto-regenerated) | off |
