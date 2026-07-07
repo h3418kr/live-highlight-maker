@@ -9,7 +9,7 @@
 **A video tool that automatically analyzes long live-stream VODs, extracts only the best moments (highlights),**
 **and layers on subtitles, transitions and background music to produce an upload-ready finished video.**
 
-Powered by Whisper speech recognition and ffmpeg · comes with a **graphical UI (GUI)** so you don't need to know Python · **modern dark theme with Windows 11 styling (sv-ttk)** · **automatic update notifications**
+Powered by faster-whisper speech recognition for rapid subtitles (3x faster than before) and ffmpeg · comes with a **graphical UI (GUI)** so you don't need to know Python · **modern dark theme with Windows 11 styling (sv-ttk)** · **automatic update notifications**
 
 </div>
 

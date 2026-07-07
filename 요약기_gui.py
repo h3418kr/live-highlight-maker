@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.8.0"
 
 # ── sv-ttk availability check ─────────────────────────────────────────────────────
 try:

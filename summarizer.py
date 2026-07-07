@@ -26,7 +26,7 @@ def _setup_bundled_paths():
 
 _setup_bundled_paths()
 
-import whisper
+from faster_whisper import WhisperModel
 from pydub import AudioSegment
 
 
@@ -348,18 +348,138 @@ def _drop_prompt_echo(result, prompt: str):
     return result
 
 
+# 모듈 레벨 캐시: 모델명 -> WhisperModel 인스턴스
+_model_cache = {}
+
+
+def _split_segment_at_word_gaps(seg, gap_threshold=0.6):
+    """세그먼트의 단어 간 큰 간격(gap_threshold초 이상)에서 분할한다.
+
+    Args:
+        seg: faster-whisper 세그먼트 (words 속성 있음)
+        gap_threshold: 분할 기준 간격(초)
+
+    Returns:
+        분할된 세그먼트 dict 리스트. words가 없으면 원본 그대로 반환.
+    """
+    if not seg.words:
+        # words가 없으면 그대로 통과
+        return [{
+            "start": seg.start,
+            "end": seg.end,
+            "text": seg.text,
+            "words": [],
+        }]
+
+    # 단어 간 간격 계산해 분할점 찾기
+    split_indices = []  # 분할 직후 단어의 인덱스들
+    for i in range(1, len(seg.words)):
+        gap = seg.words[i].start - seg.words[i-1].end
+        if gap >= gap_threshold:
+            split_indices.append(i)
+
+    # 분할점이 없으면 원본 반환
+    if not split_indices:
+        words_list = []
+        for w in seg.words:
+            words_list.append({
+                "word": w.word,
+                "start": w.start,
+                "end": w.end,
+            })
+        return [{
+            "start": seg.start,
+            "end": seg.end,
+            "text": seg.text,
+            "words": words_list,
+        }]
+
+    # 분할점 기준으로 단어 그룹 만들기
+    result = []
+    word_groups = []
+    prev = 0
+    for idx in split_indices:
+        word_groups.append(seg.words[prev:idx])
+        prev = idx
+    word_groups.append(seg.words[prev:])
+
+    # 각 그룹을 세그먼트로 변환
+    for words_in_group in word_groups:
+        if not words_in_group:
+            continue
+
+        # 텍스트는 word.word를 이어붙이고 strip (word는 앞에 공백 포함)
+        text = "".join(w.word for w in words_in_group).strip()
+
+        words_list = []
+        for w in words_in_group:
+            words_list.append({
+                "word": w.word,
+                "start": w.start,
+                "end": w.end,
+            })
+
+        result.append({
+            "start": words_in_group[0].start,
+            "end": words_in_group[-1].end,
+            "text": text,
+            "words": words_list,
+        })
+
+    return result
+
+
 def transcribe(wav_path: str, model_name: str, lang: str, prompt: str = None):
-    print(f"  Transcribing with Whisper ({model_name})...")
-    model = whisper.load_model(model_name, download_root=_bundled_model_root())
+    global _model_cache
+
+    # 모델명 정규화: "large" -> "large-v3"
+    normalized_model = "large-v3" if model_name == "large" else model_name
+
+    print(f"  Transcribing with faster-whisper ({normalized_model})...")
+
+    # 캐시에서 모델 로드 또는 새로 생성
+    if normalized_model not in _model_cache:
+        _model_cache[normalized_model] = WhisperModel(
+            normalized_model,
+            device="cpu",
+            compute_type="int8",
+            download_root=_bundled_model_root()
+        )
+
+    model = _model_cache[normalized_model]
 
     def _run(p):
-        return model.transcribe(
-            wav_path, language=lang, word_timestamps=True, verbose=False,
+        # faster-whisper는 제너레이터와 info를 반환한다
+        segments_gen, info = model.transcribe(
+            wav_path,
+            language=lang,
+            word_timestamps=True,
             initial_prompt=p or None,
-            # 이전 텍스트를 문맥으로 물고 가면 환각/반복 루프가 커진다. 짧은
-            # 하이라이트 클립에는 끄는 편이 프롬프트 따라읽기·반복을 크게 줄인다.
             condition_on_previous_text=False,
+            vad_filter=True,
         )
+
+        # 제너레이터를 리스트로 변환하고, 기존 형식으로 어댑트
+        segments_list = []
+        full_text = []
+
+        for seg in segments_gen:
+            # 단어 간 큰 간격에서 세그먼트 분할
+            split_segs = _split_segment_at_word_gaps(seg, gap_threshold=0.6)
+
+            for split_seg in split_segs:
+                segments_list.append(split_seg)
+                full_text.append(split_seg["text"])
+
+        # 분할 후 최종 id 재부여
+        for i, seg in enumerate(segments_list):
+            seg["id"] = i
+
+        return {
+            "segments": segments_list,
+            "language": info.language,
+            "text": " ".join(full_text),
+        }
 
     result = _run(prompt)
     if prompt:
