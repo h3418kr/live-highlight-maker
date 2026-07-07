@@ -1088,7 +1088,8 @@ def make_sfx(tmpdir: str, kind: str) -> Tuple[str, float]:
 def cut_and_concat(video_path: str, segments: List[Tuple[float, float]], out_path: str,
                    tmpdir: str, transition_style: str = "black",
                    sfx_kind: str = "whoosh", fade: float = 0.6,
-                   cam_region: str = "br", closeup_sec: float = 1.5) -> None:
+                   cam_region: str = "br", closeup_sec: float = 1.5,
+                   closeup_every: int = 1, punchins: dict = None) -> None:
     """
     Cut each segment and concatenate.
     -ss before -i  : fast keyframe seek
@@ -1103,29 +1104,39 @@ def cut_and_concat(video_path: str, segments: List[Tuple[float, float]], out_pat
     로 이어붙이면 잘림 지점의 타임스탬프/edit-list 가 누적되어 재생 길이가
     수십 시간으로 깨지는 문제가 있어, 타임스탬프가 안전한 TS 로 처리한다.
 
-    cam_region: "br"(기본) 등 프리셋 또는 "x,y,w,h" 픽셀 문자열 (closeup일 때만 사용)
-    closeup_sec: closeup 브리지 길이 (기본 1.5초)
+    cam_region: "br"(기본) 등 프리셋 또는 "x,y,w,h" 픽셀 문자열 (closeup/punchins일 때만 사용)
+    closeup_sec: closeup 브리지/punchins 길이 (기본 1.5초)
+    closeup_every: closeup 브리지를 몇 번의 전환마다 넣을지 (기본 1=매번)
+    punchins: {구간인덱스: 펀치인시작초(원본기준)} dict, 각 구간에서 펀치인 시작 시점 저장
     """
     has_video_fx = transition_style in ("black", "white", "closeup")
     sfx_path, sfx_len = make_sfx(tmpdir, sfx_kind)
+    punchins = punchins or {}
 
-    # closeup 브리지를 위한 해상도 취득
+    # closeup 브리지/punchins 캠 영역을 위한 해상도 취득
     W, H = None, None
-    if transition_style == "closeup":
+    need_cam_region = (transition_style == "closeup") or bool(punchins)
+    if need_cam_region:
         try:
             W, H = get_media_size(video_path)
         except Exception:
-            print(f"  (해상도 취득 실패, closeup 비활성화)")
-            transition_style = "none"
-            has_video_fx = False
+            print(f"  (해상도 취득 실패, closeup/punchins 비활성화)")
+            if transition_style == "closeup":
+                transition_style = "none"
+                has_video_fx = False
+            punchins = {}
 
     # "auto" 감지
-    if cam_region == "auto":
-        detected = detect_cam_region(video_path, tmpdir)
-        if detected:
-            cam_region = ",".join(str(v) for v in detected)
-        else:
-            print("  (자동 감지 실패 - 우하단 프리셋 사용)")
+    if cam_region == "auto" and need_cam_region:
+        try:
+            detected = detect_cam_region(video_path, tmpdir)
+            if detected:
+                cam_region = ",".join(str(v) for v in detected)
+            else:
+                print("  (자동 감지 실패 - 우하단 프리셋 사용)")
+                cam_region = "br"
+        except Exception as e:
+            print(f"  (자동 감지 오류: {e} - 우하단 프리셋 사용)")
             cam_region = "br"
 
     # closeup 캠 영역 계산
@@ -1139,7 +1150,8 @@ def cut_and_concat(video_path: str, segments: List[Tuple[float, float]], out_pat
             except ValueError:
                 pass
         # 프리셋: 캠 박스 크기 W*0.25, H*0.25 + 실제 크롭은 그 중앙 84% (모서리 잡음 흡수)
-        if transition_style == "closeup" and W and H:
+        # (closeup 전환뿐 아니라 펀치인 단독 사용 시에도 프리셋이 동작해야 한다)
+        if W and H:
             box_w = int(W * 0.25)
             box_h = int(H * 0.25)
             cw = int(box_w * 0.84)  # 실제 크롭 폭
@@ -1167,27 +1179,59 @@ def cut_and_concat(video_path: str, segments: List[Tuple[float, float]], out_pat
     for i, (start, end) in enumerate(segments):
         duration = end - start
 
-        # closeup 브리지 로직: 구간을 part1/part2로 분할
+        # closeup 브리지 + punchins 로직: 구간을 최대 4조각으로 분할
+        # 각 part는 (시작시각, 종료시각, 타입문자열)
+        # 타입: "normal"(일반), "bridge"(closeup 브리지), "punchin_bridge"(펀치인 캠크롭)
         is_last = (i == n - 1)
         parts_to_encode = []
-        if transition_style == "closeup" and not is_last and duration >= closeup_sec * 3:
-            # part1: start ~ (end - closeup_sec)
-            part1_start, part1_end = start, end - closeup_sec
-            # part2: (end - closeup_sec) ~ end (브리지)
-            part2_start, part2_end = end - closeup_sec, end
-            parts_to_encode = [(part1_start, part1_end, False), (part2_start, part2_end, True)]
-        else:
-            # closeup 아니거나 마지막이거나 너무 짧으면 일반 인코딩
-            parts_to_encode = [(start, end, False)]
 
-        for part_idx, (part_start, part_end, is_closeup_bridge) in enumerate(parts_to_encode):
-            if is_closeup_bridge:
+        # closeup 브리지 여부 (closeup_every 조건)
+        do_closeup_bridge = (
+            transition_style == "closeup" and not is_last and
+            duration >= closeup_sec * 3 and i % closeup_every == 0
+        )
+
+        # 펀치인 여부
+        punchin_time = punchins.get(i)
+        has_punchin = punchin_time is not None
+
+        if do_closeup_bridge or has_punchin:
+            # 펀치인과 closeup 브리지 모두 있을 수 있음
+            if has_punchin:
+                # punchin_time은 원본 기준, punchin_end도 원본 기준으로 계산
+                punchin_end = punchin_time + closeup_sec
+
+                # part1: start ~ punchin_time (원본)
+                parts_to_encode.append((start, punchin_time, "normal"))
+                # part2: punchin_time ~ punchin_time+closeup_sec (펀치인 캠크롭)
+                parts_to_encode.append((punchin_time, punchin_end, "punchin_bridge"))
+                # part3: punchin_time+closeup_sec ~ end (원본)
+                if punchin_end < end:
+                    if do_closeup_bridge and (end - punchin_end) >= closeup_sec:
+                        # closeup 브리지도 있으면 마지막에 분리
+                        parts_to_encode.append((punchin_end, end - closeup_sec, "normal"))
+                        parts_to_encode.append((end - closeup_sec, end, "bridge"))
+                    else:
+                        parts_to_encode.append((punchin_end, end, "normal"))
+            elif do_closeup_bridge:
+                # closeup 브리지만 있음
+                parts_to_encode.append((start, end - closeup_sec, "normal"))
+                parts_to_encode.append((end - closeup_sec, end, "bridge"))
+        else:
+            # 일반 인코딩
+            parts_to_encode.append((start, end, "normal"))
+
+        for part_idx, (part_start, part_end, part_type) in enumerate(parts_to_encode):
+            # seg_path 결정
+            if part_type == "bridge":
                 seg_path = os.path.join(tmpdir, f"seg_{i:04d}_bridge.ts")
+            elif part_type == "punchin_bridge":
+                seg_path = os.path.join(tmpdir, f"seg_{i:04d}_punchin.ts")
             else:
-                seg_path = os.path.join(tmpdir, f"seg_{i:04d}.ts") if part_idx == 0 else os.path.join(tmpdir, f"seg_{i:04d}_part1.ts")
+                seg_path = os.path.join(tmpdir, f"seg_{i:04d}.ts") if part_idx == 0 else os.path.join(tmpdir, f"seg_{i:04d}_part{part_idx}.ts")
 
             part_duration = part_end - part_start
-            add_sfx = bool(sfx_path) and i < n - 1 and is_closeup_bridge  # 브리지 끝에만 효과음
+            add_sfx = bool(sfx_path) and i < n - 1 and part_type == "bridge"  # closeup 브리지 끝에만 효과음
             do_fx = (has_video_fx or add_sfx) and part_duration > 1.0
 
             if do_fx:
@@ -1195,8 +1239,8 @@ def cut_and_concat(video_path: str, segments: List[Tuple[float, float]], out_pat
                 af = min(f, 0.15)                   # 오디오 페이드 인
 
                 # ── 비디오 브랜치 ──
-                if is_closeup_bridge and transition_style == "closeup":
-                    # 클로즈업 브리지: 캠 영역 crop + 확대
+                if part_type in ("bridge", "punchin_bridge"):
+                    # 캠 영역 crop + 확대 (closeup 브리지, 펀치인 모두 동일)
                     cx, cy, cw, ch = calc_cam_region(cam_region)
                     # 입력이 1080p 기준이 아니면 W:H로 출력
                     out_w, out_h = W, H
@@ -1246,8 +1290,10 @@ def cut_and_concat(video_path: str, segments: List[Tuple[float, float]], out_pat
                     "-muxpreload", "0", "-muxdelay", "0",
                     "-f", "mpegts", seg_path]
 
-            if is_closeup_bridge:
+            if part_type == "bridge":
                 print(f"    [{i+1}/{n}] {part_start:.1f}s ~ {part_end:.1f}s 브리지(클로즈업) 중...", flush=True)
+            elif part_type == "punchin_bridge":
+                print(f"    [{i+1}/{n}] {part_start:.1f}s ~ {part_end:.1f}s 펀치인(캠크롭) 중...", flush=True)
             else:
                 print(f"    [{i+1}/{n}] {part_start:.1f}s ~ {part_end:.1f}s 컷 중...", flush=True)
             run_ffmpeg(cmd, label=f"[{i+1}/{n}]")
@@ -1269,6 +1315,99 @@ def cut_and_concat(video_path: str, segments: List[Tuple[float, float]], out_pat
          "-movflags", "+faststart", out_path],
         label="(이어붙이기)",
     )
+
+
+def compute_punchin_times(video_path: str, segments: List[Tuple[float, float]], level: str,
+                          tmpdir: str, closeup_sec: float = 1.5) -> dict:
+    """구간 중간의 오디오 에너지 피크에서 펀치인 시점을 고른다.
+
+    level: "low"(구간 피크 상위 1/3만) / "mid"(상위 2/3) / "high"(모든 구간).
+    반환: {구간인덱스: 원본기준 펀치인 시작초}
+
+    각 구간에서 [start+2, end-closeup_sec-4] 범위 내 에너지 최대 윈도 시점을 피크로.
+    범위가 음수면 그 구간은 제외 (브리지와 겹침 방지).
+    """
+    if level == "none":
+        return {}
+
+    # 전체 오디오를 16kHz mono로 추출
+    wav_path = os.path.join(tmpdir, "punchin_audio.wav")
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-ar", "16000", "-ac", "1", "-q:a", "9",
+            wav_path
+        ]
+        run_ffmpeg(cmd, label="(펀치인 오디오 추출)")
+    except Exception as e:
+        print(f"  (펀치인 오디오 추출 실패: {e})")
+        return {}
+
+    # compute_energy로 에너지 계산
+    try:
+        energy, window_sec = compute_energy(wav_path, window_sec=0.5)
+    except Exception as e:
+        print(f"  (에너지 계산 실패: {e})")
+        return {}
+
+    # 각 구간에서 피크 찾기
+    punchin_times = {}
+    peaks_with_energy = []
+
+    for i, (start, end) in enumerate(segments):
+        # 범위: [start+2, end-closeup_sec-4]
+        search_start = start + 2.0
+        search_end = end - closeup_sec - 4.0
+
+        if search_end <= search_start:
+            # 범위가 음수 또는 매우 작음 -> 제외
+            continue
+
+        # 해당 범위 내 에너지 윈도 찾기
+        start_win = int(search_start / window_sec)
+        end_win = int(search_end / window_sec)
+
+        if start_win >= len(energy) or end_win <= start_win:
+            continue
+
+        # 범위 내 최대 에너지 윈도
+        range_energy = energy[start_win:end_win]
+        if len(range_energy) == 0:
+            continue
+
+        max_idx = np.argmax(range_energy)
+        peak_time = start + (search_start - start) + (max_idx * window_sec)
+        peak_energy = range_energy[max_idx]
+
+        peaks_with_energy.append((i, peak_time, peak_energy))
+
+    # level에 따라 상위 구간만 선택
+    if not peaks_with_energy:
+        return {}
+
+    # 에너지 기준으로 정렬
+    peaks_with_energy.sort(key=lambda x: x[2], reverse=True)
+
+    if level == "low":
+        ratio = 1 / 3
+    elif level == "mid":
+        ratio = 2 / 3
+    else:  # "high"
+        ratio = 1.0
+
+    cutoff_idx = max(1, int(len(peaks_with_energy) * ratio))
+    selected_peaks = peaks_with_energy[:cutoff_idx]
+
+    # 구간 인덱스로 정렬
+    for seg_idx, peak_time, _ in selected_peaks:
+        punchin_times[seg_idx] = peak_time
+
+    # 로그 출력
+    if punchin_times:
+        times_str = ", ".join(f"{t:.1f}s" for t in sorted(punchin_times.values()))
+        print(f"  펀치인 {len(punchin_times)}곳: {times_str}")
+
+    return punchin_times
 
 
 
@@ -1424,11 +1563,18 @@ def main():
                         choices=list(TRANSITION_STYLES.keys()),
                         help="화면 전환 스타일: none(없음) / black(암전) / white(화이트 플래시) / closeup(클로즈업). 기본 black")
     parser.add_argument("--cam-region", default="br",
-                        help="캠 위치 (closeup 모드): tl(좌상) tr(우상) bl(좌하) br(우하) 또는 x,y,w,h 픽셀 문자열. 기본 br(우하단)")
+                        help="캠 위치 (closeup/punchin 모드): tl(좌상) tr(우상) bl(좌하) br(우하) 또는 x,y,w,h 픽셀 문자열. 기본 br(우하단)")
+    parser.add_argument("--closeup-every", type=int, default=1,
+                        help="클로즈업을 몇 번의 전환마다 넣을지 (1=매번, 2=2회당 1회, 3=3회당 1회). 기본 1")
+    parser.add_argument("--closeup-sec", type=float, default=1.5,
+                        help="클로즈업/펀치인 길이(초). 기본 1.5")
     parser.add_argument("--sfx", dest="sfx_kind", default="whoosh",
                         choices=list(SFX_SPECS.keys()),
                         help="전환 효과음: none / whoosh(휙) / swoosh(스와이프) / "
                              "beep(삑) / pop(팝) / impact(임팩트). 기본 whoosh")
+    parser.add_argument("--punchin", default="none",
+                        choices=["none", "low", "mid", "high"],
+                        help="구간 중간 캠 강조(펀치인): none(끔) / low(적게) / mid(보통) / high(많이). 기본 none")
     parser.add_argument("--no-transition", dest="no_transition", action="store_true",
                         help="화면 전환 효과와 전환 효과음을 모두 끕니다 "
                              "(--transition-style none --sfx none 과 동일)")
@@ -1556,9 +1702,17 @@ def main():
 
         # Build raw summary first (without jump-cut)
         summary_raw = os.path.join(tmpdir, "summary_raw.mp4")
+
+        # compute_punchin_times if needed
+        punchins = {}
+        if args.punchin != "none":
+            punchins = compute_punchin_times(video_path, segments, args.punchin, tmpdir,
+                                             closeup_sec=args.closeup_sec)
+
         cut_and_concat(video_path, segments, summary_raw, tmpdir,
                        transition_style=args.transition_style, sfx_kind=args.sfx_kind,
-                       cam_region=args.cam_region, closeup_sec=1.5)
+                       cam_region=args.cam_region, closeup_sec=args.closeup_sec,
+                       closeup_every=args.closeup_every, punchins=punchins)
 
         # Apply jump-cut if requested
         summary_video = summary_raw

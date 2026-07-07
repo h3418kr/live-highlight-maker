@@ -29,6 +29,7 @@ from summarizer import (
     GAME_PROMPT,
     build_chapters,
     cut_and_concat,
+    compute_punchin_times,
     apply_overlays,
     extract_audio,
     transcribe,
@@ -36,6 +37,7 @@ from summarizer import (
     get_duration,
     safe_filename,
     silence_cut,
+    set_hw_encoding,
 )
 
 
@@ -118,12 +120,19 @@ def main():
                         choices=list(TRANSITION_STYLES.keys()),
                         help="화면 전환: none / black / white / closeup (기본 black)")
     parser.add_argument("--cam-region", default="br",
-                        help="캠 위치 (closeup 모드): tl/tr/bl/br 또는 x,y,w,h (기본 br)")
+                        help="캠 위치 (closeup/punchin 모드): tl/tr/bl/br 또는 x,y,w,h (기본 br)")
+    parser.add_argument("--closeup-every", type=int, default=1,
+                        help="클로즈업을 몇 번의 전환마다 넣을지 (1=매번, 2=2회당 1회, 3=3회당 1회). 기본 1")
+    parser.add_argument("--closeup-sec", type=float, default=1.5,
+                        help="클로즈업/펀치인 길이(초). 기본 1.5")
     parser.add_argument("--sfx", dest="sfx_kind", default="whoosh",
                         choices=list(SFX_SPECS.keys()),
                         help="전환 효과음 (기본 whoosh)")
     parser.add_argument("--no-transition", action="store_true",
                         help="화면 전환/효과음 모두 끄기")
+    parser.add_argument("--punchin", default="none",
+                        choices=["none", "low", "mid", "high"],
+                        help="구간 중간 캠 강조(펀치인): none(끔) / low(적게) / mid(보통) / high(많이). 기본 none")
     parser.add_argument("--subtitles", action="store_true",
                         help="완성 영상에서 자막(SRT) 자동 생성 (Whisper)")
     parser.add_argument("--model", default="small",
@@ -229,10 +238,20 @@ def main():
     with tempfile.TemporaryDirectory(prefix="manual_hl_") as tmpdir:
         # 소제목이 있으면 먼저 원본 컷을 임시로 만들고 오버레이를 입힌다.
         base_video = os.path.join(tmpdir, "highlight_raw.mp4") if use_overlay else out_video
+
+        # compute_punchin_times if needed
+        punchins = {}
+        if args.punchin != "none":
+            punchins = compute_punchin_times(args.video, segments, args.punchin, tmpdir,
+                                             closeup_sec=args.closeup_sec)
+
         cut_and_concat(args.video, segments, base_video, tmpdir,
                        transition_style=args.transition_style,
                        sfx_kind=args.sfx_kind,
-                       cam_region=args.cam_region)
+                       cam_region=args.cam_region,
+                       closeup_sec=args.closeup_sec,
+                       closeup_every=args.closeup_every,
+                       punchins=punchins)
 
         # Apply jump-cut if requested
         if args.jump_cut:

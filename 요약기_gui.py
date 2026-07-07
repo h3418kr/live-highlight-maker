@@ -40,6 +40,8 @@ SFX_CODES = ["none", "whoosh", "swoosh", "beep", "pop", "impact"]
 WMPOS_CODES = ["tl", "tr", "bl", "br"]  # 좌상 우상 좌하 우하
 WMKEY_CODES = ["", "white", "black"]  # 배경 투명 처리: 없음 / 흰색 / 검정
 CAMPOS_CODES = ["auto", "br", "bl", "tr", "tl"]  # 캠 위치: 자동감지 우하 좌하 우상 좌상
+CLOSEUPFREQ_CODES = [1, 2, 3]  # 클로즈업 빈도: 1=매 전환, 2=2회당 1회, 3=3회당 1회
+PUNCHIN_CODES = ["none", "low", "mid", "high"]  # 펀치인 레벨: 끔, 적게, 보통, 많이
 
 # Gemini API 키를 저장/불러오기 (한 번 입력하면 다음에도 자동 채움)
 GEMINI_KEY_FILE = os.path.join(SCRIPT_DIR, "gemini_key.txt")
@@ -99,6 +101,11 @@ STRINGS = {
         "transition_values": ["없음", "암전 (기본)", "화이트 플래시", "클로즈업 (캠 확대)"],
         "cam_pos": "캠 위치",
         "campos_values": ["자동 감지", "우하단", "좌하단", "우상단", "좌상단"],
+        "closeup_every": "클로즈업 빈도",
+        "closeupfreq_values": ["매 전환", "2회당 1회", "3회당 1회"],
+        "closeup_sec": "클로즈업 길이 (초)",
+        "punchin": "펀치인 (캠 강조)",
+        "punchin_values": ["끔 (기본)", "적게", "보통", "많이"],
         "sfx": "전환 효과음",
         "sfx_values": ["없음", "휙 (기본)", "스와이프", "삑", "팝", "임팩트"],
         "sfx_hint": "(서로 다른 하이라이트 사이에 적용됩니다)",
@@ -267,6 +274,11 @@ STRINGS = {
         "transition_values": ["None", "Black (default)", "White flash", "Close-up (zoom cam)"],
         "cam_pos": "Cam position",
         "campos_values": ["Auto-detect", "Bottom-right", "Bottom-left", "Top-right", "Top-left"],
+        "closeup_every": "Close-up frequency",
+        "closeupfreq_values": ["Every cut", "Every 2nd", "Every 3rd"],
+        "closeup_sec": "Close-up length (s)",
+        "punchin": "Punchin (cam emphasis)",
+        "punchin_values": ["Off (default)", "Few", "Some", "Many"],
         "sfx": "Transition SFX",
         "sfx_values": ["None", "Whoosh (default)", "Swoosh", "Beep", "Pop", "Impact"],
         "sfx_hint": "(applied between different highlights)",
@@ -631,40 +643,54 @@ def build_summarizer_tab(nb):
     sum_campos_combo.current(0)  # auto = 자동 감지
     reg("combo", (sum_campos_combo, "campos_values"), "campos_values")
     sum_campos_combo.grid(row=6, column=1, sticky="w", pady=(6, 3))
+    _label(opt, "closeup_every", row=6, column=2, sticky="w", padx=(16, 4), pady=(6, 3))
+    sum_closeupfreq_combo = ttk.Combobox(opt, values=_t("closeupfreq_values"), width=10, state="readonly")
+    sum_closeupfreq_combo.current(1)  # "2회당 1회" = index 1
+    reg("combo", (sum_closeupfreq_combo, "closeupfreq_values"), "closeupfreq_values")
+    sum_closeupfreq_combo.grid(row=6, column=3, sticky="w", pady=(6, 3))
+
+    _label(opt, "closeup_sec", row=7, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
+    sum_closeup_sec_var = tk.StringVar(value="1.5")
+    ttk.Entry(opt, textvariable=sum_closeup_sec_var, width=6).grid(row=7, column=1, sticky="w", pady=(6, 3))
+    _label(opt, "punchin", row=7, column=2, sticky="w", padx=(16, 4), pady=(6, 3))
+    sum_punchin_combo = ttk.Combobox(opt, values=_t("punchin_values"), width=10, state="readonly")
+    sum_punchin_combo.current(0)  # "끔 (기본)" = index 0
+    reg("combo", (sum_punchin_combo, "punchin_values"), "punchin_values")
+    sum_punchin_combo.grid(row=7, column=3, sticky="w", pady=(6, 3))
 
     # 원본 영상 보관 폴더 (선택)
     save_video_var = tk.StringVar(value="")
-    _label(opt, "save_video", row=7, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
+    _label(opt, "save_video", row=8, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
     ttk.Entry(opt, textvariable=save_video_var, width=28).grid(
-        row=7, column=1, columnspan=2, sticky="ew", pady=(6, 3))
+        row=8, column=1, columnspan=2, sticky="ew", pady=(6, 3))
     browse_save = ttk.Button(
         opt, text=_t("browse"),
         command=lambda: save_video_var.set(
             filedialog.askdirectory(title=_t("dlg_save_video")) or save_video_var.get()))
     reg("text", browse_save, "browse")
-    browse_save.grid(row=7, column=3, sticky="w", padx=(8, 4), pady=(6, 3))
-    _label(opt, "save_video_hint", row=8, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+    browse_save.grid(row=8, column=3, sticky="w", padx=(8, 4), pady=(6, 3))
+    _label(opt, "save_video_hint", row=9, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # 분석 전용 모드: 후보 구간만 뽑아 수동 하이라이트 탭으로 넘긴다
     analyze_var = tk.BooleanVar(value=False)
     chk_analyze = ttk.Checkbutton(opt, text=_t("analyze_only"), variable=analyze_var)
     reg("text", chk_analyze, "analyze_only")
-    chk_analyze.grid(row=9, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
-    _label(opt, "analyze_hint", row=10, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+    chk_analyze.grid(row=10, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "analyze_hint", row=11, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # 무음 구간 자동 컷 (점프컷)
     jump_cut_var = tk.BooleanVar(value=False)
     chk_jump_cut = ttk.Checkbutton(opt, text=_t("jump_cut"), variable=jump_cut_var)
     reg("text", chk_jump_cut, "jump_cut")
-    chk_jump_cut.grid(row=11, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
-    _label(opt, "jump_cut_hint", row=12, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+    chk_jump_cut.grid(row=12, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "jump_cut_hint", row=13, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # GPU 가속 인코딩
     hwenc_var = tk.BooleanVar(value=True)
     chk_hwenc = ttk.Checkbutton(opt, text=_t("hwenc"), variable=hwenc_var)
     reg("text", chk_hwenc, "hwenc")
-    chk_hwenc.grid(row=13, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
-    _label(opt, "hwenc_hint", row=14, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+    chk_hwenc.grid(row=14, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "hwenc_hint", row=15, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_summarize"))
@@ -696,6 +722,9 @@ def build_summarizer_tab(nb):
             "--transition-style", TRANS_CODES[max(trans_combo.current(), 0)],
             "--sfx", SFX_CODES[max(sfx_combo.current(), 0)],
             "--cam-region", CAMPOS_CODES[max(sum_campos_combo.current(), 0)],
+            "--closeup-every", str(CLOSEUPFREQ_CODES[max(sum_closeupfreq_combo.current(), 0)]),
+            "--closeup-sec", sum_closeup_sec_var.get(),
+            "--punchin", PUNCHIN_CODES[max(sum_punchin_combo.current(), 0)],
         ]
         if save_video_var.get().strip():
             cmd += ["--save-video", save_video_var.get().strip()]
@@ -833,48 +862,62 @@ def build_manual_tab(nb):
     campos_combo.current(0)  # auto = 자동 감지
     reg("combo", (campos_combo, "campos_values"), "campos_values")
     campos_combo.grid(row=1, column=1, sticky="w", pady=3)
+    _label(opt, "closeup_every", row=1, column=2, sticky="w", padx=(16, 4), pady=3)
+    man_closeupfreq_combo = ttk.Combobox(opt, values=_t("closeupfreq_values"), width=10, state="readonly")
+    man_closeupfreq_combo.current(1)  # "2회당 1회" = index 1
+    reg("combo", (man_closeupfreq_combo, "closeupfreq_values"), "closeupfreq_values")
+    man_closeupfreq_combo.grid(row=1, column=3, sticky="w", pady=3)
+
+    _label(opt, "closeup_sec", row=2, column=0, sticky="w", padx=(8, 4), pady=3)
+    man_closeup_sec_var = tk.StringVar(value="1.5")
+    ttk.Entry(opt, textvariable=man_closeup_sec_var, width=6).grid(row=2, column=1, sticky="w", pady=3)
+    _label(opt, "punchin", row=2, column=2, sticky="w", padx=(16, 4), pady=3)
+    man_punchin_combo = ttk.Combobox(opt, values=_t("punchin_values"), width=10, state="readonly")
+    man_punchin_combo.current(0)  # "끔 (기본)" = index 0
+    reg("combo", (man_punchin_combo, "punchin_values"), "punchin_values")
+    man_punchin_combo.grid(row=2, column=3, sticky="w", pady=3)
 
     subs_var = tk.BooleanVar(value=False)
     chk_subs = ttk.Checkbutton(opt, text=_t("man_subtitles"), variable=subs_var)
     reg("text", chk_subs, "man_subtitles")
-    chk_subs.grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 3))
+    chk_subs.grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 3))
 
     lang_var = tk.StringVar(value="ko")
-    _label(opt, "model", row=3, column=0, sticky="w", padx=(8, 4), pady=3)
+    _label(opt, "model", row=4, column=0, sticky="w", padx=(8, 4), pady=3)
     model_combo = ttk.Combobox(opt, values=_t("model_values"), width=16, state="readonly")
     model_combo.current(2)  # small
     reg("combo", (model_combo, "model_values"), "model_values")
-    model_combo.grid(row=3, column=1, sticky="w", pady=3)
-    _label(opt, "language", row=3, column=2, sticky="w", padx=(16, 4), pady=3)
-    ttk.Entry(opt, textvariable=lang_var, width=6).grid(row=3, column=3, sticky="w", pady=3)
+    model_combo.grid(row=4, column=1, sticky="w", pady=3)
+    _label(opt, "language", row=4, column=2, sticky="w", padx=(16, 4), pady=3)
+    ttk.Entry(opt, textvariable=lang_var, width=6).grid(row=4, column=3, sticky="w", pady=3)
 
     # 하이라이트 소제목 위치 ( '시작-끝 | 소제목' 으로 입력한 소제목이 뜨는 자리 )
-    _label(opt, "label_position", row=4, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
+    _label(opt, "label_position", row=5, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
     labelpos_combo = ttk.Combobox(opt, values=_t("wm_pos_values"), width=10, state="readonly")
     labelpos_combo.current(1)  # tr = 우상단
     reg("combo", (labelpos_combo, "wm_pos_values"), "wm_pos_values")
-    labelpos_combo.grid(row=4, column=1, sticky="w", pady=(6, 3))
-    _label(opt, "label_position_hint", row=4, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(6, 3))
+    labelpos_combo.grid(row=5, column=1, sticky="w", pady=(6, 3))
+    _label(opt, "label_position_hint", row=5, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(6, 3))
 
-    _label(opt, "font", row=5, column=0, sticky="w", padx=(8, 4), pady=3)
+    _label(opt, "font", row=6, column=0, sticky="w", padx=(8, 4), pady=3)
     font_combo = ttk.Combobox(opt, values=_t("font_values"), width=12, state="readonly")
     font_combo.current(0)  # Paperlogy default
     reg("combo", (font_combo, "font_values"), "font_values")
-    font_combo.grid(row=5, column=1, sticky="w", pady=3)
+    font_combo.grid(row=6, column=1, sticky="w", pady=3)
 
     # 무음 구간 자동 컷 (점프컷)
     man_jump_cut_var = tk.BooleanVar(value=False)
     chk_man_jump_cut = ttk.Checkbutton(opt, text=_t("jump_cut"), variable=man_jump_cut_var)
     reg("text", chk_man_jump_cut, "jump_cut")
-    chk_man_jump_cut.grid(row=6, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
-    _label(opt, "jump_cut_hint", row=7, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+    chk_man_jump_cut.grid(row=7, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "jump_cut_hint", row=8, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # GPU 가속 인코딩
     man_hwenc_var = tk.BooleanVar(value=True)
     chk_man_hwenc = ttk.Checkbutton(opt, text=_t("hwenc"), variable=man_hwenc_var)
     reg("text", chk_man_hwenc, "hwenc")
-    chk_man_hwenc.grid(row=8, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
-    _label(opt, "hwenc_hint", row=9, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+    chk_man_hwenc.grid(row=9, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "hwenc_hint", row=10, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_manual"))
@@ -911,6 +954,9 @@ def build_manual_tab(nb):
         if name_var.get().strip():
             cmd += ["--name", name_var.get().strip()]
         cmd += ["--cam-region", CAMPOS_CODES[max(campos_combo.current(), 0)]]
+        cmd += ["--closeup-every", str(CLOSEUPFREQ_CODES[max(man_closeupfreq_combo.current(), 0)])]
+        cmd += ["--closeup-sec", man_closeup_sec_var.get()]
+        cmd += ["--punchin", PUNCHIN_CODES[max(man_punchin_combo.current(), 0)]]
         cmd += ["--label-pos", WMPOS_CODES[max(labelpos_combo.current(), 0)]]
         cmd += ["--font", FONT_CODES[max(font_combo.current(), 0)]]
         if man_jump_cut_var.get():
