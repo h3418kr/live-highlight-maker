@@ -784,6 +784,7 @@ TRANSITION_STYLES = {
     "none":  "없음",
     "black": "암전(fade to black)",
     "white": "화이트 플래시",
+    "closeup": "클로즈업 (캠 확대)",
 }
 
 # 전환 효과음(오디오) 종류: key -> (lavfi 입력, 오디오 필터, 길이(초), 사람이 읽는 이름)
@@ -842,82 +843,162 @@ def make_sfx(tmpdir: str, kind: str) -> Tuple[str, float]:
 
 def cut_and_concat(video_path: str, segments: List[Tuple[float, float]], out_path: str,
                    tmpdir: str, transition_style: str = "black",
-                   sfx_kind: str = "whoosh", fade: float = 0.6) -> None:
+                   sfx_kind: str = "whoosh", fade: float = 0.6,
+                   cam_region: str = "br", closeup_sec: float = 1.5) -> None:
     """
     Cut each segment and concatenate.
     -ss before -i  : fast keyframe seek
     re-encode      : avoids frozen frames from keyframe misalignment
 
     transition_style 이 'black'/'white' 이면 각 구간에 암전/화이트 화면전환을,
+    'closeup' 이면 구간 끝부분을 캠 영역으로 crop후 확대해 브리지 영상을 삽입한다.
     sfx_kind 가 'none' 이 아니면 전환 지점 효과음을 추가한다. 클립 내부에서
     처리하므로 전체 길이/자막 타이밍은 변하지 않는다.
 
     각 구간은 MPEG-TS(.ts)로 인코딩한 뒤 이어붙인다. MP4를 concat -c copy
     로 이어붙이면 잘림 지점의 타임스탬프/edit-list 가 누적되어 재생 길이가
     수십 시간으로 깨지는 문제가 있어, 타임스탬프가 안전한 TS 로 처리한다.
+
+    cam_region: "br"(기본) 등 프리셋 또는 "x,y,w,h" 픽셀 문자열 (closeup일 때만 사용)
+    closeup_sec: closeup 브리지 길이 (기본 1.5초)
     """
-    has_video_fx = transition_style in ("black", "white")
+    has_video_fx = transition_style in ("black", "white", "closeup")
     sfx_path, sfx_len = make_sfx(tmpdir, sfx_kind)
+
+    # closeup 브리지를 위한 해상도 취득
+    W, H = None, None
+    if transition_style == "closeup":
+        try:
+            W, H = get_media_size(video_path)
+        except Exception:
+            print(f"  (해상도 취득 실패, closeup 비활성화)")
+            transition_style = "none"
+            has_video_fx = False
+
+    # closeup 캠 영역 계산
+    def calc_cam_region(cam_region_str: str) -> Tuple[int, int, int, int]:
+        """cam_region 프리셋 또는 "x,y,w,h" 파싱 -> (x, y, w, h)"""
+        if "," in cam_region_str:
+            try:
+                parts = [int(p.strip()) for p in cam_region_str.split(",")]
+                if len(parts) == 4:
+                    return tuple(parts)
+            except ValueError:
+                pass
+        # 프리셋: 캠 박스 크기 W*0.25, H*0.25 + 실제 크롭은 그 중앙 84% (모서리 잡음 흡수)
+        if transition_style == "closeup" and W and H:
+            box_w = int(W * 0.25)
+            box_h = int(H * 0.25)
+            cw = int(box_w * 0.84)  # 실제 크롭 폭
+            ch = int(box_h * 0.84)  # 실제 크롭 높이
+            # 각 프리셋 위치의 박스 정의
+            if cam_region_str == "tl":
+                box_x, box_y = 0, 0
+            elif cam_region_str == "tr":
+                box_x, box_y = W - box_w, 0
+            elif cam_region_str == "bl":
+                box_x, box_y = 0, H - box_h
+            else:  # "br" 또는 기본값
+                box_x, box_y = W - box_w, H - box_h
+            # 박스 내에서 중앙 정렬
+            x = box_x + (box_w - cw) // 2
+            y = box_y + (box_h - ch) // 2
+            return (max(0, x), max(0, y), cw, ch)
+        # 기본 fallback (25% 기준)
+        fallback_w = max(1, int(W * 0.25) if W else 320)
+        fallback_h = max(1, int(H * 0.25) if H else 240)
+        return (0, 0, fallback_w, fallback_h)
 
     segment_files = []
     n = len(segments)
     for i, (start, end) in enumerate(segments):
-        seg_path = os.path.join(tmpdir, f"seg_{i:04d}.ts")
         duration = end - start
 
-        add_sfx = bool(sfx_path) and i < n - 1   # 마지막 클립 뒤엔 효과음 없음
-        do_fx = (has_video_fx or add_sfx) and duration > 1.0
-
-        if do_fx:
-            f = min(fade, duration / 4)          # 매우 짧은 클립 보호
-            af = min(f, 0.15)                    # 오디오 페이드 인
-
-            # ── 비디오 브랜치 ──
-            if has_video_fx:
-                color = "white" if transition_style == "white" else "black"
-                vfilter = (f"[0:v]fade=t=in:st=0:d={f:.3f}:color={color},"
-                           f"fade=t=out:st={duration - f:.3f}:d={f:.3f}:color={color}[v]")
-                vmap = "[v]"
-            else:
-                vfilter = ""
-                vmap = "0:v"
-
-            # ── 오디오 브랜치 ──
-            afilter_base = (f"[0:a]afade=t=in:st=0:d={af:.3f},"
-                            f"afade=t=out:st={duration - f:.3f}:d={f:.3f}")
-            if add_sfx:
-                delay_ms = int(max(0.0, duration - sfx_len) * 1000)
-                afilter = (afilter_base + "[a0];"
-                           f"[1:a]adelay={delay_ms}|{delay_ms}[a1];"
-                           f"[a0][a1]amix=inputs=2:duration=first:normalize=0[a]")
-            else:
-                afilter = afilter_base + "[a]"
-
-            filter_complex = ";".join(p for p in (vfilter, afilter) if p)
-
-            # -ss/-t 는 반드시 video 입력(-i video_path) '앞'에 두어
-            # 해당 입력만 잘라낸다. sfx 입력 앞에 -t 가 오면 video 가
-            # 안 잘리고 원본 끝까지 읽혀 파일이 수십 시간으로 깨진다.
-            cmd = ["ffmpeg", "-y",
-                   "-ss", str(start), "-t", str(duration), "-i", video_path]
-            if add_sfx:
-                cmd += ["-i", sfx_path]
-            cmd += ["-filter_complex", filter_complex,
-                    "-map", vmap, "-map", "[a]"]
+        # closeup 브리지 로직: 구간을 part1/part2로 분할
+        is_last = (i == n - 1)
+        parts_to_encode = []
+        if transition_style == "closeup" and not is_last and duration >= closeup_sec * 3:
+            # part1: start ~ (end - closeup_sec)
+            part1_start, part1_end = start, end - closeup_sec
+            # part2: (end - closeup_sec) ~ end (브리지)
+            part2_start, part2_end = end - closeup_sec, end
+            parts_to_encode = [(part1_start, part1_end, False), (part2_start, part2_end, True)]
         else:
-            cmd = ["ffmpeg", "-y",
-                   "-ss", str(start), "-t", str(duration), "-i", video_path]
+            # closeup 아니거나 마지막이거나 너무 짧으면 일반 인코딩
+            parts_to_encode = [(start, end, False)]
 
-        cmd += [*video_encode_args(23),
-                "-pix_fmt", "yuv420p", "-r", "30",
-                "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
-                "-fps_mode", "cfr",
-                "-muxpreload", "0", "-muxdelay", "0",
-                "-f", "mpegts", seg_path]
+        for part_idx, (part_start, part_end, is_closeup_bridge) in enumerate(parts_to_encode):
+            if is_closeup_bridge:
+                seg_path = os.path.join(tmpdir, f"seg_{i:04d}_bridge.ts")
+            else:
+                seg_path = os.path.join(tmpdir, f"seg_{i:04d}.ts") if part_idx == 0 else os.path.join(tmpdir, f"seg_{i:04d}_part1.ts")
 
-        print(f"    [{i+1}/{n}] {start:.1f}s ~ {end:.1f}s 컷 중...", flush=True)
-        run_ffmpeg(cmd, label=f"[{i+1}/{n}]")
-        segment_files.append(seg_path)
+            part_duration = part_end - part_start
+            add_sfx = bool(sfx_path) and i < n - 1 and is_closeup_bridge  # 브리지 끝에만 효과음
+            do_fx = (has_video_fx or add_sfx) and part_duration > 1.0
+
+            if do_fx:
+                f = min(fade, part_duration / 4)    # 매우 짧은 클립 보호
+                af = min(f, 0.15)                   # 오디오 페이드 인
+
+                # ── 비디오 브랜치 ──
+                if is_closeup_bridge and transition_style == "closeup":
+                    # 클로즈업 브리지: 캠 영역 crop + 확대
+                    cx, cy, cw, ch = calc_cam_region(cam_region)
+                    # 입력이 1080p 기준이 아니면 W:H로 출력
+                    out_w, out_h = W, H
+                    vfilter = (f"[0:v]crop={cw}:{ch}:{cx}:{cy},"
+                               f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
+                               f"crop={out_w}:{out_h}[v]")
+                    vmap = "[v]"
+                elif transition_style in ("black", "white"):
+                    color = "white" if transition_style == "white" else "black"
+                    vfilter = (f"[0:v]fade=t=in:st=0:d={f:.3f}:color={color},"
+                               f"fade=t=out:st={part_duration - f:.3f}:d={f:.3f}:color={color}[v]")
+                    vmap = "[v]"
+                else:
+                    vfilter = ""
+                    vmap = "0:v"
+
+                # ── 오디오 브랜치 ──
+                afilter_base = (f"[0:a]afade=t=in:st=0:d={af:.3f},"
+                                f"afade=t=out:st={part_duration - f:.3f}:d={f:.3f}")
+                if add_sfx:
+                    delay_ms = int(max(0.0, part_duration - sfx_len) * 1000)
+                    afilter = (afilter_base + "[a0];"
+                               f"[1:a]adelay={delay_ms}|{delay_ms}[a1];"
+                               f"[a0][a1]amix=inputs=2:duration=first:normalize=0[a]")
+                else:
+                    afilter = afilter_base + "[a]"
+
+                filter_complex = ";".join(p for p in (vfilter, afilter) if p)
+
+                # -ss/-t 는 반드시 video 입력(-i video_path) '앞'에 두어
+                # 해당 입력만 잘라낸다. sfx 입력 앞에 -t 가 오면 video 가
+                # 안 잘리고 원본 끝까지 읽혀 파일이 수십 시간으로 깨진다.
+                cmd = ["ffmpeg", "-y",
+                       "-ss", str(part_start), "-t", str(part_duration), "-i", video_path]
+                if add_sfx:
+                    cmd += ["-i", sfx_path]
+                cmd += ["-filter_complex", filter_complex,
+                        "-map", vmap, "-map", "[a]"]
+            else:
+                cmd = ["ffmpeg", "-y",
+                       "-ss", str(part_start), "-t", str(part_duration), "-i", video_path]
+
+            cmd += [*video_encode_args(23),
+                    "-pix_fmt", "yuv420p", "-r", "30",
+                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+                    "-fps_mode", "cfr",
+                    "-muxpreload", "0", "-muxdelay", "0",
+                    "-f", "mpegts", seg_path]
+
+            if is_closeup_bridge:
+                print(f"    [{i+1}/{n}] {part_start:.1f}s ~ {part_end:.1f}s 브리지(클로즈업) 중...", flush=True)
+            else:
+                print(f"    [{i+1}/{n}] {part_start:.1f}s ~ {part_end:.1f}s 컷 중...", flush=True)
+            run_ffmpeg(cmd, label=f"[{i+1}/{n}]")
+            segment_files.append(seg_path)
 
     # TS 조각들을 concat '디먹서'로 이어붙이고 mp4 로 다시 담는다(재인코딩 X).
     # concat: 프로토콜은 각 조각의 PTS 를 그대로 누적시켜 재생 길이가
@@ -1088,7 +1169,9 @@ def main():
                         help="Max video resolution height (default: 720)")
     parser.add_argument("--transition-style", default="black",
                         choices=list(TRANSITION_STYLES.keys()),
-                        help="화면 전환 스타일: none(없음) / black(암전) / white(화이트 플래시). 기본 black")
+                        help="화면 전환 스타일: none(없음) / black(암전) / white(화이트 플래시) / closeup(클로즈업). 기본 black")
+    parser.add_argument("--cam-region", default="br",
+                        help="캠 위치 (closeup 모드): tl(좌상) tr(우상) bl(좌하) br(우하) 또는 x,y,w,h 픽셀 문자열. 기본 br(우하단)")
     parser.add_argument("--sfx", dest="sfx_kind", default="whoosh",
                         choices=list(SFX_SPECS.keys()),
                         help="전환 효과음: none / whoosh(휙) / swoosh(스와이프) / "
@@ -1221,7 +1304,8 @@ def main():
         # Build raw summary first (without jump-cut)
         summary_raw = os.path.join(tmpdir, "summary_raw.mp4")
         cut_and_concat(video_path, segments, summary_raw, tmpdir,
-                       transition_style=args.transition_style, sfx_kind=args.sfx_kind)
+                       transition_style=args.transition_style, sfx_kind=args.sfx_kind,
+                       cam_region=args.cam_region, closeup_sec=1.5)
 
         # Apply jump-cut if requested
         summary_video = summary_raw

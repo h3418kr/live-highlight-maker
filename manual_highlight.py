@@ -116,7 +116,9 @@ def main():
                         help="출력 파일 이름(확장자 제외). 미지정 시 원본 파일명 사용")
     parser.add_argument("--transition-style", default="black",
                         choices=list(TRANSITION_STYLES.keys()),
-                        help="화면 전환: none / black / white (기본 black)")
+                        help="화면 전환: none / black / white / closeup (기본 black)")
+    parser.add_argument("--cam-region", default="br",
+                        help="캠 위치 (closeup 모드): tl/tr/bl/br 또는 x,y,w,h (기본 br)")
     parser.add_argument("--sfx", dest="sfx_kind", default="whoosh",
                         choices=list(SFX_SPECS.keys()),
                         help="전환 효과음 (기본 whoosh)")
@@ -229,7 +231,8 @@ def main():
         base_video = os.path.join(tmpdir, "highlight_raw.mp4") if use_overlay else out_video
         cut_and_concat(args.video, segments, base_video, tmpdir,
                        transition_style=args.transition_style,
-                       sfx_kind=args.sfx_kind)
+                       sfx_kind=args.sfx_kind,
+                       cam_region=args.cam_region)
 
         # Apply jump-cut if requested
         if args.jump_cut:
