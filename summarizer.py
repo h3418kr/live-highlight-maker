@@ -29,6 +29,13 @@ _setup_bundled_paths()
 from faster_whisper import WhisperModel
 from pydub import AudioSegment
 
+try:
+    import onnxruntime
+    from PIL import Image
+    _ONNX_AVAILABLE = True
+except ImportError:
+    _ONNX_AVAILABLE = False
+
 
 # ── Hardware acceleration encoder detection ──────────────────────────────────
 _HW_ENCODER = None   # None=미탐지, ""=없음(폴백), "h264_nvenc"|"h264_qsv"|"h264_amf"
@@ -820,6 +827,263 @@ SFX_SPECS = {
 }
 
 
+def detect_cam_region(video_path: str, tmpdir: str):
+    """영상에서 고정 캠(얼굴) 위치를 자동 감지. 성공 시 (x,y,w,h), 실패 시 None."""
+    if not _ONNX_AVAILABLE:
+        return None
+
+    # 모델 경로 찾기
+    base = os.path.dirname(os.path.abspath(__file__))
+    model_paths = [
+        os.path.join(base, "models", "ultraface-rfb-320.onnx"),
+        os.path.join(base, "assets", "ultraface-rfb-320.onnx"),
+    ]
+    model_path = None
+    for p in model_paths:
+        if os.path.isfile(p):
+            model_path = p
+            break
+
+    if not model_path:
+        print("  (얼굴 감지 모델 없음, 캠 자동 감지 비활성화)")
+        return None
+
+    try:
+        # 해상도 취득
+        W, H = get_media_size(video_path)
+
+        # 12프레임 샘플링 (앞뒤 5% 제외)
+        dur = get_duration(video_path)
+        start_t = dur * 0.05
+        end_t = dur * 0.95
+        sample_times = np.linspace(start_t, end_t, 12)
+
+        # 프레임 추출
+        frame_dir = os.path.join(tmpdir, "face_detect_frames")
+        os.makedirs(frame_dir, exist_ok=True)
+
+        # 12프레임을 균등하게 샘플링
+        fps_val = 30  # 가정: 30fps 영상
+        frame_interval = int((end_t - start_t) * fps_val / 11)
+        start_frame = int(start_t * fps_val)
+
+        cmd = [
+            "ffmpeg", "-i", video_path,
+            "-vf", f"select='isnan(prev_selected_t)+gte(t-prev_selected_t,{(end_t - start_t) / 11})',setpts=PTS-STARTPTS",
+            "-vsync", "vfr",
+            os.path.join(frame_dir, "frame_%04d.png")
+        ]
+        run_ffmpeg(cmd, label="(얼굴감지-프레임추출)")
+
+        # 추출된 프레임 모음
+        frame_files = sorted([f for f in os.listdir(frame_dir) if f.endswith('.png')])
+        if not frame_files:
+            return None
+
+        # ONNX 세션 생성
+        sess = onnxruntime.InferenceSession(model_path, providers=['CPUExecutionProvider'])
+        input_name = sess.get_inputs()[0].name
+
+        all_boxes = []  # (x1, y1, x2, y2, score, frame_idx)
+
+        for frame_idx, frame_file in enumerate(frame_files):
+            frame_path = os.path.join(frame_dir, frame_file)
+            img = Image.open(frame_path).convert('RGB')
+
+            # 1920x1080 기준으로 RFB-320 입력 준비
+            # 모델은 320x240 입력을 받음
+            model_w, model_h = 320, 240
+            img_resized = img.resize((model_w, model_h))
+
+            # (img - 127) / 128 정규화
+            img_array = np.array(img_resized, dtype=np.float32)
+            img_array = (img_array - 127.0) / 128.0
+
+            # NCHW 포맷
+            img_array = np.transpose(img_array, (2, 0, 1))
+            img_array = np.expand_dims(img_array, 0)
+
+            # 추론
+            outputs = sess.run(None, {input_name: img_array})
+            scores = outputs[0]  # (1, 4420, 2)
+            boxes = outputs[1]   # (1, 4420, 4) - 정규화 x1y1x2y2
+
+            # score > 0.7인 얼굴 박스 수집 (원본 해상도로 환산)
+            scores_reshaped = scores[0, :, 1]  # 얼굴 점수 (배경 점수 제외)
+            for j in range(len(scores_reshaped)):
+                if scores_reshaped[j] > 0.7:
+                    # 정규화된 좌표를 원본 해상도로
+                    x1, y1, x2, y2 = boxes[0, j]
+                    x1 = int(x1 * W)
+                    y1 = int(y1 * H)
+                    x2 = int(x2 * W)
+                    y2 = int(y2 * H)
+                    all_boxes.append((x1, y1, x2, y2, float(scores_reshaped[j]), frame_idx))
+
+        if not all_boxes:
+            return None
+
+        # 프레임별 NMS (각 프레임 내 중복 제거)
+        def nms_boxes_per_frame(boxes, iou_thresh=0.4):
+            if not boxes:
+                return []
+            # boxes를 frame_idx별로 그룹화
+            from collections import defaultdict
+            frames_dict = defaultdict(list)
+            for box in boxes:
+                frame_idx = box[5] if len(box) >= 6 else 0
+                frames_dict[frame_idx].append(box)
+
+            # 각 프레임별로 NMS 적용
+            keep = []
+            for frame_id in sorted(frames_dict.keys()):
+                frame_boxes = frames_dict[frame_id]
+                frame_boxes_sorted = sorted(frame_boxes, key=lambda b: -b[4])
+                frame_keep = []
+                for box in frame_boxes_sorted:
+                    keep_this = True
+                    for kept_box in frame_keep:
+                        x1a, y1a, x2a, y2a = box[:4]
+                        x1b, y1b, x2b, y2b = kept_box[:4]
+                        inter_x1 = max(x1a, x1b)
+                        inter_y1 = max(y1a, y1b)
+                        inter_x2 = min(x2a, x2b)
+                        inter_y2 = min(y2a, y2b)
+                        if inter_x2 > inter_x1 and inter_y2 > inter_y1:
+                            inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+                            area_a = (x2a - x1a) * (y2a - y1a)
+                            area_b = (x2b - x1b) * (y2b - y1b)
+                            union_area = area_a + area_b - inter_area
+                            iou = inter_area / union_area if union_area > 0 else 0
+                            if iou > iou_thresh:
+                                keep_this = False
+                                break
+                    if keep_this:
+                        frame_keep.append(box)
+                keep.extend(frame_keep)
+            return keep
+
+        nms_boxes_result = nms_boxes_per_frame(all_boxes)
+
+        # 고정 위치 클러스터링: 공간 + 시간 필터
+        if not nms_boxes_result:
+            return None
+
+        # 클러스터링: 중심 거리 W*0.08 이내를 같은 클러스터로
+        clusters = []
+        assigned = set()
+
+        for i, box in enumerate(nms_boxes_result):
+            if i in assigned:
+                continue
+            x1, y1, x2, y2 = box[:4]
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+            cluster = [i]
+            assigned.add(i)
+
+            threshold = W * 0.08
+            for j in range(i + 1, len(nms_boxes_result)):
+                if j in assigned:
+                    continue
+                x1j, y1j, x2j, y2j = nms_boxes_result[j][:4]
+                cxj, cyj = (x1j + x2j) / 2, (y1j + y2j) / 2
+                dist = ((cx - cxj) ** 2 + (cy - cyj) ** 2) ** 0.5
+                if dist <= threshold:
+                    cluster.append(j)
+                    assigned.add(j)
+
+            clusters.append(cluster)
+
+        # 각 클러스터의 등장 프레임 수 계산
+        cluster_info = []
+        for cluster_indices in clusters:
+            unique_frames = set()
+            for idx in cluster_indices:
+                if len(nms_boxes_result[idx]) >= 6:
+                    unique_frames.add(nms_boxes_result[idx][5])  # frame_idx
+            cluster_info.append({
+                'indices': cluster_indices,
+                'frame_count': len(unique_frames),
+                'unique_frames': unique_frames
+            })
+
+        # 샘플 프레임 수의 60% 이상 + 가장 큰 클러스터 선택
+        sample_frame_count = frame_idx + 1
+        threshold_frames = int(sample_frame_count * 0.6)
+        qualified = [c for c in cluster_info if c['frame_count'] >= threshold_frames]
+
+        if not qualified:
+            print("  (고정 캠 판정 실패 - 얼굴이 일정 위치에 반복 등장하지 않음)")
+            return None
+
+        # 가장 큰 클러스터(가장 많은 박스를 포함)를 선택
+        best_cluster = max(qualified, key=lambda c: len(c['indices']))
+
+        # 디버그: 클러스터 정보 출력
+        print(f"  [클러스터] 중심: ({int((nms_boxes_result[best_cluster['indices'][0]][0] + nms_boxes_result[best_cluster['indices'][0]][2]) / 2)}, "
+              f"{int((nms_boxes_result[best_cluster['indices'][0]][1] + nms_boxes_result[best_cluster['indices'][0]][3]) / 2)}), "
+              f"등장 프레임 수: {best_cluster['frame_count']}/{sample_frame_count}")
+
+        # 선택된 클러스터의 박스들만으로 중앙값 계산
+        selected_boxes = np.array([nms_boxes_result[idx][:4] for idx in best_cluster['indices']], dtype=np.float32)
+        face_x1 = int(np.median(selected_boxes[:, 0]))
+        face_y1 = int(np.median(selected_boxes[:, 1]))
+        face_x2 = int(np.median(selected_boxes[:, 2]))
+        face_y2 = int(np.median(selected_boxes[:, 3]))
+
+        face_w = face_x2 - face_x1
+        face_h = face_y2 - face_y1
+
+        # 크롭 영역 계산: 가로 2.2배, 세로 2.0배 (얼굴이 상단 1/3)
+        crop_w = int(face_w * 2.2)
+        crop_h = int(face_h * 2.0)
+
+        # 중심 기준, 세로는 아래쪽으로 더 확장
+        # (위 여백을 줄여야 캠 상단 경계를 안 넘는다 - 캠 아래쪽은 몸통이라 안전)
+        crop_x = face_x1 + (face_w - crop_w) // 2
+        crop_y = face_y1 - int(crop_h * 0.18)
+
+        # 화면 경계로 클램프
+        crop_x = max(0, min(crop_x, W - crop_w))
+        crop_y = max(0, min(crop_y, H - crop_h))
+
+        # 16:9 비율 조정 (짧은 쪽을 늘림)
+        aspect_ratio = 16.0 / 9.0
+        current_ratio = crop_w / crop_h if crop_h > 0 else 1
+
+        if current_ratio < aspect_ratio:
+            # 가로가 부족 -> 가로 늘림
+            new_w = int(crop_h * aspect_ratio)
+            crop_x -= (new_w - crop_w) // 2
+            crop_w = new_w
+        else:
+            # 세로가 부족 -> 세로 늘림
+            new_h = int(crop_w / aspect_ratio)
+            crop_y -= (new_h - crop_h) // 2
+            crop_h = new_h
+
+        # 다시 클램프
+        crop_x = max(0, min(crop_x, W - crop_w))
+        crop_y = max(0, min(crop_y, H - crop_h))
+        crop_w = min(crop_w, W - crop_x)
+        crop_h = min(crop_h, H - crop_y)
+
+        # 확장 영역이 캠 경계를 살짝 넘어 게임 화면이 새어 들어올 수 있어
+        # 최종 크롭을 중앙 기준 8% 인셋 (같은 비율로 줄여 16:9 유지)
+        inset_w = int(crop_w * 0.92)
+        inset_h = int(crop_h * 0.92)
+        crop_x += (crop_w - inset_w) // 2
+        crop_y += (crop_h - inset_h) // 2
+        crop_w, crop_h = inset_w, inset_h
+
+        print(f"  캠 자동 감지: x={crop_x}, y={crop_y}, {crop_w}x{crop_h}")
+        return (crop_x, crop_y, crop_w, crop_h)
+
+    except Exception as e:
+        print(f"  (자동 감지 오류: {e})")
+        return None
+
+
 def make_sfx(tmpdir: str, kind: str) -> Tuple[str, float]:
     """선택한 종류의 장면전환 효과음을 ffmpeg 합성으로 생성.
     (path, 길이(초)) 반환. 'none' 이거나 실패 시 ("", 0.0)."""
@@ -874,6 +1138,15 @@ def cut_and_concat(video_path: str, segments: List[Tuple[float, float]], out_pat
             print(f"  (해상도 취득 실패, closeup 비활성화)")
             transition_style = "none"
             has_video_fx = False
+
+    # "auto" 감지
+    if cam_region == "auto":
+        detected = detect_cam_region(video_path, tmpdir)
+        if detected:
+            cam_region = ",".join(str(v) for v in detected)
+        else:
+            print("  (자동 감지 실패 - 우하단 프리셋 사용)")
+            cam_region = "br"
 
     # closeup 캠 영역 계산
     def calc_cam_region(cam_region_str: str) -> Tuple[int, int, int, int]:

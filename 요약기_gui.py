@@ -39,7 +39,7 @@ TRANS_CODES = ["none", "black", "white", "closeup"]
 SFX_CODES = ["none", "whoosh", "swoosh", "beep", "pop", "impact"]
 WMPOS_CODES = ["tl", "tr", "bl", "br"]  # 좌상 우상 좌하 우하
 WMKEY_CODES = ["", "white", "black"]  # 배경 투명 처리: 없음 / 흰색 / 검정
-CAMPOS_CODES = ["br", "bl", "tr", "tl"]  # 캠 위치: 우하 좌하 우상 좌상
+CAMPOS_CODES = ["auto", "br", "bl", "tr", "tl"]  # 캠 위치: 자동감지 우하 좌하 우상 좌상
 
 # Gemini API 키를 저장/불러오기 (한 번 입력하면 다음에도 자동 채움)
 GEMINI_KEY_FILE = os.path.join(SCRIPT_DIR, "gemini_key.txt")
@@ -98,7 +98,7 @@ STRINGS = {
         "transition": "화면 전환",
         "transition_values": ["없음", "암전 (기본)", "화이트 플래시", "클로즈업 (캠 확대)"],
         "cam_pos": "캠 위치",
-        "campos_values": ["우하단", "좌하단", "우상단", "좌상단"],
+        "campos_values": ["자동 감지", "우하단", "좌하단", "우상단", "좌상단"],
         "sfx": "전환 효과음",
         "sfx_values": ["없음", "휙 (기본)", "스와이프", "삑", "팝", "임팩트"],
         "sfx_hint": "(서로 다른 하이라이트 사이에 적용됩니다)",
@@ -266,7 +266,7 @@ STRINGS = {
         "transition": "Transition",
         "transition_values": ["None", "Black (default)", "White flash", "Close-up (zoom cam)"],
         "cam_pos": "Cam position",
-        "campos_values": ["Bottom-right", "Bottom-left", "Top-right", "Top-left"],
+        "campos_values": ["Auto-detect", "Bottom-right", "Bottom-left", "Top-right", "Top-left"],
         "sfx": "Transition SFX",
         "sfx_values": ["None", "Whoosh (default)", "Swoosh", "Beep", "Pop", "Impact"],
         "sfx_hint": "(applied between different highlights)",
@@ -628,7 +628,7 @@ def build_summarizer_tab(nb):
 
     _label(opt, "cam_pos", row=6, column=0, sticky="w", padx=(8, 4), pady=(6, 3))
     sum_campos_combo = ttk.Combobox(opt, values=_t("campos_values"), width=10, state="readonly")
-    sum_campos_combo.current(0)  # br = 우하단
+    sum_campos_combo.current(0)  # auto = 자동 감지
     reg("combo", (sum_campos_combo, "campos_values"), "campos_values")
     sum_campos_combo.grid(row=6, column=1, sticky="w", pady=(6, 3))
 
@@ -830,7 +830,7 @@ def build_manual_tab(nb):
 
     _label(opt, "cam_pos", row=1, column=0, sticky="w", padx=(8, 4), pady=3)
     campos_combo = ttk.Combobox(opt, values=_t("campos_values"), width=10, state="readonly")
-    campos_combo.current(0)  # br = 우하단
+    campos_combo.current(0)  # auto = 자동 감지
     reg("combo", (campos_combo, "campos_values"), "campos_values")
     campos_combo.grid(row=1, column=1, sticky="w", pady=3)
 
