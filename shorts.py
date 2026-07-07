@@ -34,6 +34,7 @@ from summarizer import (
     get_duration,
     safe_filename,
     copy_fonts_to,
+    video_encode_args,
 )
 from finalize import run_ffmpeg
 from manual_highlight import parse_ranges
@@ -263,7 +264,7 @@ def to_vertical(src: str, out_path: str, mode: str, ass_name: str = "",
     cmd = ["ffmpeg", "-y", "-i", os.path.abspath(src),
            "-filter_complex", fc,
            "-map", "[v]", "-map", "0:a?",
-           "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+           *video_encode_args(22),
            "-r", "30", "-fps_mode", "cfr",
            "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
            "-movflags", "+faststart", os.path.abspath(out_path)]
@@ -304,7 +305,13 @@ def main():
                         help="자막 크기 (1080x1920 실제 픽셀 기준, 기본 54)")
     parser.add_argument("--sub-pos", default="bottom", choices=list(SUB_POS.keys()),
                         help="자막 세로 위치: bottom(하단) / center(중앙) / top(상단). 기본 하단")
+    parser.add_argument("--cpu-encode", action="store_true",
+                        help="GPU 가속 인코딩 끄기 (호환성 문제 시)")
     args = parser.parse_args()
+
+    if args.cpu_encode:
+        from summarizer import set_hw_encoding
+        set_hw_encoding(False)
 
     if not os.path.isfile(args.video):
         print(f"ERROR: 영상 파일을 찾을 수 없습니다: {args.video}")

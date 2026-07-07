@@ -299,7 +299,13 @@ def main():
         default=720,
         help="다운로드 시 최대 높이(기본 720)",
     )
+    parser.add_argument("--cpu-encode", action="store_true",
+                        help="GPU 가속 인코딩 끄기 (호환성 문제 시)")
     args = parser.parse_args()
+
+    if args.cpu_encode:
+        from summarizer import set_hw_encoding
+        set_hw_encoding(False)
 
     # 1. 비디오 소스 해석
     if os.path.isfile(args.video):

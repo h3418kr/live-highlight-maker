@@ -9,7 +9,7 @@
 **A video tool that automatically analyzes long live-stream VODs, extracts only the best moments (highlights),**
 **and layers on subtitles, transitions and background music to produce an upload-ready finished video.**
 
-Powered by faster-whisper speech recognition for rapid subtitles (3x faster than before) and ffmpeg · comes with a **graphical UI (GUI)** so you don't need to know Python · **modern dark theme with Windows 11 styling (sv-ttk)** · **automatic update notifications**
+Powered by faster-whisper speech recognition for rapid subtitles (3x faster than before) · **GPU-accelerated encoding (auto-detected)** and ffmpeg · comes with a **graphical UI (GUI)** so you don't need to know Python · **modern dark theme with Windows 11 styling (sv-ttk)** · **automatic update notifications**
 
 </div>
 
@@ -134,6 +134,7 @@ Below is the actual program screen. Just follow the numbers.
 | Transition | Between highlights: none / fade to black / white flash | `fade to black` |
 | Transition SFX | SFX at the transition: none / whoosh / swoosh / beep / pop / impact | `whoosh` |
 | Keep-original folder | Folder to preserve the downloaded source video (empty = delete after processing) | empty |
+| GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
 | Auto silence cutting | Remove silent gaps to tighten pacing (subtitles auto-regenerated) | off |
 | Analyze candidates only | Skip building the video; extract candidate ranges and **auto-fill the Manual highlights tab** (skips Whisper, so it's fast) | off |
 
@@ -164,6 +165,7 @@ Use this when you want to build a summary from a **video file you already have**
 | Highlight ranges | One `start - end` per line (optional `| subtitle` after it) | — |
 | Transition / SFX | Same as the Summarize tab | `fade to black` / `whoosh` |
 | Subtitle position | Corner where the `| subtitle` text appears | `Top-right` |
+| GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
 | Auto silence cutting | Remove silent gaps to tighten pacing (subtitles auto-regenerated) | off |
 | Generate subtitles | Auto-generate Whisper subtitles (SRT) from the result on/off | off |
 
@@ -200,6 +202,7 @@ Pick one great scene from a landscape video and turn it into a **9:16 vertical v
 | Subtitle position | Vertical position of the captions: bottom / center / top | `bottom` |
 | Subtitle font | Font: Paperlogy / Malgun Gothic | `Paperlogy` |
 | Auto subtitles | Burn in big bold Whisper captions on/off | off |
+| GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
 
 **Button: click "Make Short"** → `name_shorts.mp4` (1080x1920 vertical) is created.
 
@@ -227,6 +230,7 @@ Generate multiple vertical shorts from a single video's highlights in one pass. 
 | Subtitle position | Vertical position of the captions: bottom / center / top | `bottom` |
 | Subtitle font | Font: Paperlogy / Malgun Gothic | `Paperlogy` |
 | Subtitle size | Size of the burned-in captions (in real 1080x1920 pixels) | `54` |
+| GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
 | Add AI titles (Gemini) | AI analyzes audio and auto-generates title text to display on/off | off |
 | Gemini API key | Paste a free key (saved after first use). See how to get one below | — |
 
@@ -283,6 +287,7 @@ Combine the summary video + (edited) subtitles + thumbnail image into an upload-
 | Subtitle size | Font size of the burned-in subtitles (default `24`) |
 | Subtitle font | Font: Paperlogy / Malgun Gothic |
 | BGM volume | BGM level (0–1), relative to speech (default `0.25`) |
+| GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
 | Add intro | Use the thumbnail as the opening scene on/off |
 | Insert cover | Embed the thumbnail as album-art-style cover in the mp4 on/off |
 | Burn subtitles | Bake subtitles into the video (hardsub) on/off |

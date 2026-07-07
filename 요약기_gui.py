@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.9.0"
 
 # ── sv-ttk availability check ─────────────────────────────────────────────────────
 try:
@@ -122,6 +122,8 @@ STRINGS = {
         "analyze_hint": "(분석이 끝나면 후보 구간이 수동 하이라이트 탭에 자동으로 채워집니다)",
         "jump_cut": "무음 구간 자동 컷 (점프컷)",
         "jump_cut_hint": "(말 없는 구간을 잘라 템포를 높입니다 — 자막은 자동 재생성)",
+        "hwenc": "GPU 가속 인코딩",
+        "hwenc_hint": "(지원하는 GPU가 있으면 자동 사용 — 호환성 문제 시 끔)",
         "msg_analyze_done": ("하이라이트 후보 분석 완료!\n\n"
                              "후보 구간 목록을 수동 하이라이트 탭에 불러왔습니다.\n"
                              "구간을 확인·수정한 뒤 「하이라이트 만들기」를 누르세요."),
@@ -286,6 +288,8 @@ STRINGS = {
         "analyze_hint": "(when done, the candidate ranges are loaded into the Manual highlights tab)",
         "jump_cut": "Remove silent gaps (Jump cut)",
         "jump_cut_hint": "(tighten pacing by cutting silent pauses — subtitles auto-regenerated)",
+        "hwenc": "GPU-accelerated encoding",
+        "hwenc_hint": "(auto-used if supported GPU is available — disable if compatibility issues)",
         "msg_analyze_done": ("Highlight analysis finished!\n\n"
                              "The candidate ranges were loaded into the Manual highlights tab.\n"
                              "Review / adjust them, then click \"Make highlights\"."),
@@ -644,6 +648,13 @@ def build_summarizer_tab(nb):
     chk_jump_cut.grid(row=10, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
     _label(opt, "jump_cut_hint", row=11, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
+    # GPU 가속 인코딩
+    hwenc_var = tk.BooleanVar(value=True)
+    chk_hwenc = ttk.Checkbutton(opt, text=_t("hwenc"), variable=hwenc_var)
+    reg("text", chk_hwenc, "hwenc")
+    chk_hwenc.grid(row=12, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "hwenc_hint", row=13, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_summarize"))
     reg("var", btn_label_var, "btn_summarize")
@@ -681,6 +692,8 @@ def build_summarizer_tab(nb):
             cmd.append("--analyze-only")
         if jump_cut_var.get():
             cmd.append("--jump-cut")
+        if not hwenc_var.get():
+            cmd.append("--cpu-encode")
 
         log.config(state="normal")
         log.delete("1.0", tk.END)
@@ -838,6 +851,13 @@ def build_manual_tab(nb):
     chk_man_jump_cut.grid(row=5, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
     _label(opt, "jump_cut_hint", row=6, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
+    # GPU 가속 인코딩
+    man_hwenc_var = tk.BooleanVar(value=True)
+    chk_man_hwenc = ttk.Checkbutton(opt, text=_t("hwenc"), variable=man_hwenc_var)
+    reg("text", chk_man_hwenc, "hwenc")
+    chk_man_hwenc.grid(row=7, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "hwenc_hint", row=8, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_manual"))
     reg("var", btn_label_var, "btn_manual")
@@ -876,6 +896,8 @@ def build_manual_tab(nb):
         cmd += ["--font", FONT_CODES[max(font_combo.current(), 0)]]
         if man_jump_cut_var.get():
             cmd.append("--jump-cut")
+        if not man_hwenc_var.get():
+            cmd.append("--cpu-encode")
         if subs_var.get():
             cmd += ["--subtitles",
                     "--model", MODEL_CODES[max(model_combo.current(), 0)],
@@ -1016,6 +1038,11 @@ def build_shorts_tab(nb):
     reg("text", chk_subs, "shorts_subtitles")
     chk_subs.grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 3))
 
+    shorts_hwenc_var = tk.BooleanVar(value=True)
+    chk_shorts_hwenc = ttk.Checkbutton(opt, text=_t("hwenc"), variable=shorts_hwenc_var)
+    reg("text", chk_shorts_hwenc, "hwenc")
+    chk_shorts_hwenc.grid(row=3, column=2, columnspan=2, sticky="w", padx=8, pady=(6, 3))
+
     lang_var = tk.StringVar(value="ko")
     _label(opt, "model", row=4, column=0, sticky="w", padx=(8, 4), pady=3)
     model_combo = ttk.Combobox(opt, values=_t("model_values"), width=16, state="readonly")
@@ -1065,6 +1092,8 @@ def build_shorts_tab(nb):
             cmd += ["--subtitles",
                     "--model", MODEL_CODES[max(model_combo.current(), 0)],
                     "--lang", lang_var.get()]
+        if not shorts_hwenc_var.get():
+            cmd.append("--cpu-encode")
 
         log.config(state="normal")
         log.delete("1.0", tk.END)
@@ -1223,6 +1252,11 @@ def build_finalize_tab(nb):
     reg("text", chk_loudnorm, "opt_loudnorm")
     chk_loudnorm.grid(row=3, column=2, columnspan=2, sticky="w", padx=(16, 4), pady=3)
 
+    final_hwenc_var = tk.BooleanVar(value=True)
+    chk_final_hwenc = ttk.Checkbutton(opt, text=_t("hwenc"), variable=final_hwenc_var)
+    reg("text", chk_final_hwenc, "hwenc")
+    chk_final_hwenc.grid(row=4, column=2, columnspan=2, sticky="w", padx=(16, 4), pady=3)
+
     _label(opt, "bgm_volume", row=4, column=0, sticky="w", padx=(8, 4), pady=3)
     ttk.Entry(opt, textvariable=bgm_volume_var, width=6).grid(row=4, column=1, sticky="w", pady=3)
 
@@ -1329,6 +1363,10 @@ def build_finalize_tab(nb):
         # 음량 정규화
         if loudnorm_var.get():
             cmd += ["--loudnorm"]
+
+        # GPU 가속 인코딩
+        if not final_hwenc_var.get():
+            cmd.append("--cpu-encode")
 
         # AI 자동 키워드 (Gemini)
         gkey = gemini_key_var.get().strip()
@@ -1500,6 +1538,12 @@ def build_autoshorts_tab(nb):
     reg("text", chk_ai, "autoshorts_ai_title")
     chk_ai.grid(row=5, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 3))
 
+    # GPU 가속 인코딩
+    autoshorts_hwenc_var = tk.BooleanVar(value=True)
+    chk_autoshorts_hwenc = ttk.Checkbutton(opt, text=_t("hwenc"), variable=autoshorts_hwenc_var)
+    reg("text", chk_autoshorts_hwenc, "hwenc")
+    chk_autoshorts_hwenc.grid(row=5, column=2, columnspan=2, sticky="w", padx=8, pady=(6, 3))
+
     # Gemini 키
     _label(opt, "autoshorts_gemini_key", row=6, column=0, sticky="w", padx=(8, 4), pady=3)
     gemini_var = tk.StringVar(value=load_gemini_key())
@@ -1570,6 +1614,8 @@ def build_autoshorts_tab(nb):
                     "--font-size", fontsize_var.get().strip()]
         if ai_title_var.get() and gkey:
             cmd += ["--ai-title", "--gemini-key", gkey]
+        if not autoshorts_hwenc_var.get():
+            cmd.append("--cpu-encode")
 
         log.config(state="normal")
         log.delete("1.0", tk.END)

@@ -138,7 +138,13 @@ def main():
                         help="소제목 글꼴 (기본 Paperlogy)")
     parser.add_argument("--jump-cut", action="store_true",
                         help="무음 구간 자동 컷(점프컷)으로 템포를 높입니다")
+    parser.add_argument("--cpu-encode", action="store_true",
+                        help="GPU 가속 인코딩 끄기 (호환성 문제 시)")
     args = parser.parse_args()
+
+    if args.cpu_encode:
+        from summarizer import set_hw_encoding
+        set_hw_encoding(False)
 
     if args.no_transition:
         args.transition_style = "none"

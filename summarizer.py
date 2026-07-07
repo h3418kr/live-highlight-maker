@@ -30,6 +30,62 @@ from faster_whisper import WhisperModel
 from pydub import AudioSegment
 
 
+# ── Hardware acceleration encoder detection ──────────────────────────────────
+_HW_ENCODER = None   # None=미탐지, ""=없음(폴백), "h264_nvenc"|"h264_qsv"|"h264_amf"
+_HW_ENABLED = True
+
+
+def set_hw_encoding(enabled: bool):
+    """GUI/CLI에서 끄기용. 모듈 전역 _HW_ENABLED 설정."""
+    global _HW_ENABLED
+    _HW_ENABLED = enabled
+
+
+def _detect_hw_encoder():
+    """h264_nvenc -> h264_qsv -> h264_amf 순서로 0.2초 무음 테스트 인코딩을 돌려
+    처음 성공하는 인코더명을 반환. 전부 실패하면 ''. 결과는 _HW_ENCODER에 캐시."""
+    global _HW_ENCODER
+    if _HW_ENCODER is not None:
+        return _HW_ENCODER
+
+    encoders = ["h264_nvenc", "h264_qsv", "h264_amf"]
+    for encoder in encoders:
+        try:
+            # ffmpeg -hide_banner -f lavfi -i color=black:size=256x256:rate=30:duration=0.2 -c:v <encoder> -f null -
+            cmd = [
+                "ffmpeg", "-hide_banner", "-f", "lavfi",
+                "-i", "color=black:size=256x256:rate=30:duration=0.2",
+                "-c:v", encoder, "-f", "null", "-"
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, **_PROC_KW)
+            if result.returncode == 0:
+                _HW_ENCODER = encoder
+                print(f"  GPU 인코더 감지: {encoder}")
+                return _HW_ENCODER
+        except Exception:
+            continue
+
+    _HW_ENCODER = ""  # 전부 실패하면 ""
+    return _HW_ENCODER
+
+
+def video_encode_args(crf: int) -> list:
+    """하드웨어 인코더가 있으면 그에 맞는 인자, 없으면 libx264 폴백 인자를 반환."""
+    if not _HW_ENABLED:
+        return ["-c:v", "libx264", "-preset", "fast", "-crf", str(crf)]
+
+    encoder = _detect_hw_encoder()
+    if encoder == "h264_nvenc":
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", str(crf)]
+    elif encoder == "h264_qsv":
+        return ["-c:v", "h264_qsv", "-global_quality", str(crf)]
+    elif encoder == "h264_amf":
+        return ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp",
+                "-qp_i", str(crf), "-qp_p", str(crf + 2)]
+    else:
+        return ["-c:v", "libx264", "-preset", "fast", "-crf", str(crf)]
+
+
 # ── Font helper for bundled fonts ────────────────────────────────────────────
 def bundled_fonts_dir():
     """경로를 쓸 수 없는 환경에서 번들 폰트 폴더를 찾는다."""
@@ -293,7 +349,7 @@ def apply_overlays(in_video: str, out_video: str, tmpdir: str, *,
     cmd = ["ffmpeg", "-y"] + inputs + [
         "-filter_complex", filter_complex,
         "-map", vmap, "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+        *video_encode_args(20),
         "-pix_fmt", "yuv420p", "-c:a", "copy",
         "-movflags", "+faststart", os.path.abspath(out_video),
     ]
@@ -852,7 +908,7 @@ def cut_and_concat(video_path: str, segments: List[Tuple[float, float]], out_pat
             cmd = ["ffmpeg", "-y",
                    "-ss", str(start), "-t", str(duration), "-i", video_path]
 
-        cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        cmd += [*video_encode_args(23),
                 "-pix_fmt", "yuv420p", "-r", "30",
                 "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
                 "-fps_mode", "cfr",
@@ -1049,7 +1105,12 @@ def main():
                              "자막 전사(Whisper)를 건너뛰어 훨씬 빠릅니다.")
     parser.add_argument("--jump-cut", action="store_true",
                         help="무음 구간 자동 컷(점프컷)으로 템포를 높입니다")
+    parser.add_argument("--cpu-encode", action="store_true",
+                        help="GPU 가속 인코딩 끄기 (호환성 문제 시)")
     args = parser.parse_args()
+
+    if args.cpu_encode:
+        set_hw_encoding(False)
 
     if args.no_transition:
         args.transition_style = "none"

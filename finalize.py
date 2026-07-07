@@ -32,6 +32,11 @@ def _setup_bundled_paths():
 
 _setup_bundled_paths()
 
+# summarizer 모듈의 GPU 인코딩 헬퍼 import
+# (포터블 임베디드 파이썬은 현재 스크립트 폴더를 sys.path에 자동 추가하지 않으므로 명시)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from summarizer import video_encode_args
+
 # ── Font helper (bundled fonts) ──────────────────────────────────────────────
 def bundled_fonts_dir():
     """번들 폰트 폴더를 찾는다."""
@@ -116,7 +121,7 @@ def get_video_props(path: str):
 
 # 인코딩 공통 옵션 (인트로/본편이 같은 규격이라야 재인코딩 없이 이어붙일 수 있다)
 def _enc_opts(fps: str):
-    return ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
+    return [*video_encode_args(23),
             "-pix_fmt", "yuv420p", "-r", fps,
             "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
             "-fps_mode", "cfr", "-muxpreload", "0", "-muxdelay", "0",
@@ -659,8 +664,13 @@ def main():
                     help="AI 키워드 라벨 글자 크기 (기본 44)")
     ap.add_argument("--loudnorm", action="store_true",
                     help="음량을 유튜브 표준(-14 LUFS)으로 정규화")
+    ap.add_argument("--cpu-encode", action="store_true",
+                    help="GPU 가속 인코딩 끄기 (호환성 문제 시)")
     ap.set_defaults(intro=True, cover=True, burn=True)
     args = ap.parse_args()
+
+    if args.cpu_encode:
+        set_hw_encoding(False)
 
     # "-" 는 GUI 에서 '사용 안 함' 을 뜻하는 자리표시자.
     srt = "" if args.srt == "-" else args.srt
