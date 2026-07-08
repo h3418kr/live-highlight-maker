@@ -136,6 +136,7 @@ Below is the actual program screen. Just follow the numbers.
 | Closeup frequency | How often to insert closeup cuts: every transition / **1 per 2 transitions** / 1 per 3 transitions (prevents monotony from every-transition repeats) | `1 per 2 transitions` |
 | Closeup length (s) | Duration of each closeup cut | `1.5` s |
 | Punch-in (camera emphasis) | During highlights, detect audio peaks (streamer reaction moments) and briefly zoom the camera/avatar: off (default) / low / mid / high | `off` |
+| Punch-in times (optional) | Specify moments manually in `12:30, 45:02` format (source video timeline, comma-separated). Works alongside auto-detection; times outside highlights are skipped | empty by default |
 | Transition SFX | SFX at the transition: none / whoosh / swoosh / beep / pop / impact | `whoosh` |
 | Keep-original folder | Folder to preserve the downloaded source video (empty = delete after processing) | empty |
 | GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
@@ -171,6 +172,7 @@ Use this when you want to build a summary from a **video file you already have**
 | Camera position | For closeup transitions: **auto-detect** (default) / bottom-right / bottom-left / top-right / top-left | `auto-detect` |
 | Closeup frequency / length | Same as the Summarize tab (every / 1 per 2 / 1 per 3 transitions · duration in s) | `1 per 2` / `1.5` s |
 | Punch-in (camera emphasis) | Briefly zoom the camera/avatar at audio peaks mid-highlight: off / low / mid / high | `off` |
+| Punch-in times (optional) | Specify moments manually in `12:30, 45:02` format (source video timeline, comma-separated). Works alongside auto-detection; times outside highlights are skipped | empty by default |
 | Subtitle position | Corner where the `| subtitle` text appears | `Top-right` |
 | GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
 | Auto silence cutting | Remove silent gaps to tighten pacing (subtitles auto-regenerated) | off |
