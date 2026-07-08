@@ -574,6 +574,38 @@ def compute_energy(wav_path: str, window_sec: float = 0.5) -> Tuple[np.ndarray, 
     return energy, window_sec
 
 
+def compute_voice_energy(wav_path: str, tmpdir: str, window_sec: float = 0.5) -> Tuple[np.ndarray, float]:
+    """목소리 대역(200-3800Hz) 에너지 곡선. 반환: (np.ndarray, window_sec)
+
+    방송인 음성이 게임 효과음·음악보다 우선되도록 하는 목적.
+    """
+    try:
+        # ffmpeg로 voice.wav 생성 (200-3800Hz 필터)
+        voice_wav = os.path.join(tmpdir, "voice_filtered.wav")
+        cmd = [
+            "ffmpeg", "-y", "-i", wav_path,
+            "-af", "highpass=f=200,lowpass=f=3800",
+            "-ar", "16000", "-ac", "1", voice_wav
+        ]
+        run_ffmpeg(cmd, label="(목소리대역-필터)")
+
+        # voice.wav에서 에너지 계산
+        audio = AudioSegment.from_wav(voice_wav)
+        sr = audio.frame_rate
+        samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
+        window = int(sr * window_sec)
+        n_windows = len(samples) // window
+        energy = np.zeros(n_windows)
+        for i in range(n_windows):
+            chunk = samples[i * window:(i + 1) * window]
+            energy[i] = np.sqrt(np.mean(chunk ** 2))
+        return energy, window_sec
+
+    except Exception as e:
+        print(f"  (목소리대역 에너지 계산 실패: {e})")
+        return np.array([], dtype=np.float32), window_sec
+
+
 def _gaussian_smooth(x: np.ndarray, sigma: float) -> np.ndarray:
     kernel_size = int(6 * sigma) | 1  # ensure odd
     half = kernel_size // 2
@@ -581,6 +613,89 @@ def _gaussian_smooth(x: np.ndarray, sigma: float) -> np.ndarray:
     kernel = np.exp(-0.5 * (k / sigma) ** 2)
     kernel /= kernel.sum()
     return np.convolve(x, kernel, mode="same")
+
+
+def compute_chat_activity(video_path: str, chat_region: Tuple[int, int, int, int],
+                          duration: float, tmpdir: str, sample_sec: float = 2.0) -> Tuple[np.ndarray, float, float, float]:
+    """Improved chat activity curve using masked pixel approach.
+
+    Focus on text-like pixels (bright, contrasty) to reduce game background noise.
+
+    Returns: (curve, sample_sec, active_ratio, chat_weight)
+    """
+    try:
+        x, y, w, h = chat_region
+        W, H = get_media_size(video_path)
+
+        crop_str = f"{w}:{h}:{x}:{y}"
+        frame_dir = os.path.join(tmpdir, "chat_activity_frames_v2")
+        os.makedirs(frame_dir, exist_ok=True)
+
+        # Extract frames in RGB (for better text detection)
+        scale_h = 120
+        cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-vf", f"fps=1/{sample_sec},crop={crop_str},scale=240:-2,format=rgb24",
+            os.path.join(frame_dir, "frame_%05d.png")
+        ]
+        run_ffmpeg(cmd, label="(채팅활동-프레임추출)")
+
+        frame_files = sorted([f for f in os.listdir(frame_dir) if f.endswith('.png')])
+        if len(frame_files) < 2:
+            return np.array([], dtype=np.float32), sample_sec, 0.0, 0.0
+
+        from PIL import Image as PILImage
+
+        activity = []
+        active_threshold = 3.0 / 255.0
+
+        for i in range(len(frame_files) - 1):
+            try:
+                img1 = np.array(PILImage.open(os.path.join(frame_dir, frame_files[i])), dtype=np.float32)
+                img2 = np.array(PILImage.open(os.path.join(frame_dir, frame_files[i + 1])), dtype=np.float32)
+
+                # Convert RGB to grayscale for analysis
+                if len(img1.shape) == 3:
+                    img1 = np.mean(img1, axis=2)
+                    img2 = np.mean(img2, axis=2)
+
+                # Masked change: focus on bright, contrasty pixels
+                # Text pixels are typically bright and show change between frames
+                f1 = img1 / 255.0
+                f2 = img2 / 255.0
+
+                bright_mask = np.maximum(f1, f2) > (150 / 255.0)
+                contrast_mask = np.abs(f1 - f2) > (10 / 255.0)
+                text_mask = bright_mask & contrast_mask
+
+                if np.sum(text_mask) > 0:
+                    # Only measure change in text-like pixels
+                    masked_change = np.mean(np.abs(f1[text_mask] - f2[text_mask]))
+                else:
+                    # Fallback: raw change (lower weight)
+                    masked_change = np.mean(np.abs(f1 - f2)) * 0.5
+
+                activity.append(masked_change)
+            except:
+                activity.append(0.0)
+
+        activity = np.array(activity, dtype=np.float32)
+
+        # 3-point smoothing
+        if len(activity) >= 3:
+            smoothed = np.convolve(activity, np.array([1, 1, 1]) / 3.0, mode='same')
+        else:
+            smoothed = activity
+
+        # Compute metrics
+        active_ratio = np.sum(activity >= active_threshold) / len(activity) if len(activity) > 0 else 0.0
+        chat_weight = min(1.0, active_ratio / 0.2)
+
+        return smoothed, sample_sec, active_ratio, chat_weight
+
+    except Exception as e:
+        print(f"  (채팅활동 곡선 계산 실패: {e})")
+        return np.array([], dtype=np.float32), sample_sec, 0.0, 0.0
 
 
 def find_exciting_segments(
@@ -591,15 +706,65 @@ def find_exciting_segments(
     expand_before: float = 5.0,
     expand_after: float = 20.0,
     bridge_gap: float = 8.0,
+    chat_curve: np.ndarray = None,
+    chat_sample_sec: float = None,
+    chat_weight: float = None,
+    voice_energy: np.ndarray = None,
 ) -> List[Tuple[float, float]]:
     """Find high-energy segments that sum to approximately target_sec.
 
     bridge_gap: 선택된 하이라이트끼리 원본상 시간차가 이 값(초) 이하이면
                 같은 내용으로 보고 사이 구간까지 포함해 하나로 이어붙인다.
                 (전환 효과는 이렇게 병합된 최종 구간들 '사이'에만 들어간다.)
+    chat_curve: 채팅 활동 곡선 (없으면 오디오 에너지만 사용)
+    chat_sample_sec: 채팅 곡선의 샘플 간격(초)
+    chat_weight: 채팅 적응 가중치 (min(1.0, active_ratio / 0.2))
+    voice_energy: 목소리 대역 에너지 (200-3800Hz 필터링)
     """
     sigma = 10.0 / window_sec  # smooth over ~10s
     smoothed = _gaussian_smooth(energy, sigma)
+
+    # z-score 정규화: 전체 에너지
+    energy_mean = np.mean(smoothed)
+    energy_std = np.std(smoothed)
+    if energy_std > 1e-6:
+        energy_z = (smoothed - energy_mean) / energy_std
+    else:
+        energy_z = np.zeros_like(smoothed)
+
+    # z-score 정규화: 목소리 대역 에너지 (항상 계산)
+    voice_z = np.zeros_like(energy_z)
+    if voice_energy is not None and len(voice_energy) > 0:
+        voice_energy_smooth = _gaussian_smooth(voice_energy, sigma)
+        voice_mean = np.mean(voice_energy_smooth)
+        voice_std = np.std(voice_energy_smooth)
+        if voice_std > 1e-6:
+            voice_z = (voice_energy_smooth - voice_mean) / voice_std
+
+    # 결합 점수 계산
+    if chat_curve is not None and len(chat_curve) > 0 and chat_sample_sec is not None and chat_weight is not None:
+        # 채팅 z-score 정규화
+        chat_mean = np.mean(chat_curve)
+        chat_std = np.std(chat_curve)
+        if chat_std > 1e-6:
+            chat_z = (chat_curve - chat_mean) / chat_std
+        else:
+            chat_z = np.zeros_like(chat_curve)
+
+        # 채팅 곡선을 에너지 윈도 타임라인으로 리샘플
+        energy_times = np.arange(len(smoothed)) * window_sec
+        chat_times = np.arange(len(chat_curve)) * chat_sample_sec
+        chat_z_resampled = np.interp(energy_times, chat_times, chat_z, left=0.0, right=0.0)
+
+        # 결합 점수: 0.5 * energy_z + 1.0 * voice_z + chat_weight * chat_z
+        smoothed = 0.5 * energy_z + 1.0 * voice_z + chat_weight * chat_z_resampled
+        print(f"  채팅 가중치: {chat_weight:.2f} (활동 비율 {chat_weight/1.0*20:.0f}%+)")
+        print("  (목소리 반응 + 채팅 반응 반영된 점수로 분석 중)")
+    else:
+        # 채팅이 없어도 목소리는 적용
+        smoothed = 0.5 * energy_z + 1.0 * voice_z
+        if len(voice_z) > 0 and np.any(voice_z != 0):
+            print("  (목소리 반응 반영된 점수로 분석 중)")
 
     threshold = np.percentile(smoothed, 60)
 
@@ -988,6 +1153,172 @@ def _cluster_and_crop_faces(all_boxes, frame_idx, W, H, expand_scale_w=2.2, expa
     crop_w, crop_h = inset_w, inset_h
 
     return (crop_x, crop_y, crop_w, crop_h)
+
+
+def detect_chat_region(video_path: str, tmpdir: str, exclude_region=None):
+    """Improved chat region detection using color saturation heuristic.
+
+    Strategy:
+    1. Sample 12 time points (5%-95% of video)
+    2. Extract RGB frames from left/right bands
+    3. Measure color saturation (indicator of colored nicknames)
+    4. Left band with high saturation typically has chat
+    5. Conservative auto-detection: left_sat > max(0.25, right_sat*1.3) or right_sat > max(0.25, left_sat*1.3)
+
+    Returns: (x, y, w, h) or None if detection fails
+    """
+    try:
+        W, H = get_media_size(video_path)
+        dur = get_duration(video_path)
+
+        # Sample 12 time points
+        start_t, end_t = dur * 0.05, dur * 0.95
+        sample_times = [start_t + (end_t - start_t) * i / 11 for i in range(12)]
+
+        band_w_scaled = 160
+
+        def evaluate_band_saturation(band_name, x_range_normalized):
+            """Measure average saturation in band."""
+            saturation_values = []
+
+            for center_t in sample_times:
+                t1 = max(0, center_t - 0.5)
+                t2 = min(dur, center_t + 0.5)
+
+                for t in [t1, t2]:
+                    try:
+                        crop_x1 = int(W * x_range_normalized[0])
+                        crop_x2 = int(W * x_range_normalized[1])
+                        crop_w = crop_x2 - crop_x1
+
+                        # Extract RGB
+                        cmd = [
+                            "ffmpeg", "-y", "-ss", str(t), "-i", video_path,
+                            "-vf", f"crop={crop_w}:{H}:{crop_x1}:0,scale={band_w_scaled}:-1,format=rgb24",
+                            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"
+                        ]
+                        proc = subprocess.Popen(
+                            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            stdin=subprocess.DEVNULL, creationflags=0x08000000 if os.name == "nt" else 0
+                        )
+                        raw_data, _ = proc.communicate(timeout=10)
+
+                        actual_h = len(raw_data) // (band_w_scaled * 3)
+                        if actual_h > 0:
+                            frame = np.frombuffer(raw_data, dtype=np.uint8).reshape(actual_h, band_w_scaled, 3)
+
+                            # Calculate saturation
+                            r = frame[..., 0].astype(float) / 255.0
+                            g = frame[..., 1].astype(float) / 255.0
+                            b = frame[..., 2].astype(float) / 255.0
+
+                            max_c = np.maximum(np.maximum(r, g), b)
+                            min_c = np.minimum(np.minimum(r, g), b)
+                            sat = (max_c - min_c) / (max_c + 1e-6)
+
+                            # Measure high-saturation pixels
+                            high_sat_ratio = np.sum(sat > 0.3) / sat.size
+                            saturation_values.append(high_sat_ratio)
+                    except:
+                        pass
+
+            avg_sat = np.mean(saturation_values) if saturation_values else 0
+            return avg_sat
+
+        # Compare left vs right
+        left_sat = evaluate_band_saturation("left", (0, 1/3))
+        right_sat = evaluate_band_saturation("right", (2/3, 1))
+
+        print(f"  Chat detection: Left saturation={left_sat:.2%}, Right={right_sat:.2%}")
+
+        # Conservative auto-detection
+        if left_sat > max(0.25, right_sat * 1.3):
+            x_range = (0, 1/3)
+            selected_band = "left"
+        elif right_sat > max(0.25, left_sat * 1.3):
+            x_range = (2/3, 1)
+            selected_band = "right"
+        else:
+            print(f"  (채팅창 자동 판별 불확실 - 채팅 미사용. '채팅 위치'를 왼쪽/오른쪽으로 직접 지정하면 사용됩니다)")
+            return None
+
+        # Refine vertical bounds using grayscale activity
+        crop_x1 = int(W * x_range[0])
+        crop_x2 = int(W * x_range[1])
+        crop_w = crop_x2 - crop_x1
+
+        row_activity = None
+        for center_t in sample_times[:3]:
+            t1 = max(0, center_t - 0.5)
+            t2 = min(dur, center_t + 0.5)
+
+            frames_pair = []
+            for t in [t1, t2]:
+                try:
+                    cmd = [
+                        "ffmpeg", "-y", "-ss", str(t), "-i", video_path,
+                        "-vf", f"crop={crop_w}:{H}:{crop_x1}:0,scale={band_w_scaled}:-1,format=gray",
+                        "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray8", "-"
+                    ]
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL, creationflags=0x08000000 if os.name == "nt" else 0
+                    )
+                    raw_data, _ = proc.communicate(timeout=10)
+                    actual_h = len(raw_data) // band_w_scaled
+                    if actual_h > 0:
+                        frame_array = np.frombuffer(raw_data, dtype=np.uint8).reshape(actual_h, band_w_scaled)
+                        frames_pair.append(frame_array.astype(np.float32))
+                except:
+                    pass
+
+            if len(frames_pair) == 2:
+                diff = np.abs(frames_pair[0] - frames_pair[1])
+                row_means = np.mean(diff, axis=1)
+                if row_activity is None:
+                    row_activity = row_means
+                else:
+                    row_activity += row_means
+
+        if row_activity is None:
+            # Fallback: use full height
+            y_start, y_end = 0, H
+        else:
+            # Find continuous active region
+            threshold = np.mean(row_activity) * 0.5
+            active_rows = np.where(row_activity > threshold)[0]
+
+            if len(active_rows) > 0:
+                y_start, y_end = active_rows[0], active_rows[-1]
+                # 10% margin removal
+                band_h = y_end - y_start + 1
+                margin = max(1, int(band_h * 0.1))
+                y_start = min(y_start + margin, y_end - margin)
+            else:
+                y_start, y_end = 0, H
+
+        # Convert to original coordinates
+        scale_h = len(row_activity) if row_activity is not None else H
+        chat_y_scaled = int(y_start * H / scale_h) if scale_h > 0 else 0
+        chat_h_scaled = int((y_end - y_start) * H / scale_h) if scale_h > 0 else H
+
+        chat_x = crop_x1
+        chat_y = chat_y_scaled
+        chat_w = crop_w
+        chat_h = chat_h_scaled
+
+        # Bounds check
+        chat_x = max(0, min(chat_x, W - chat_w))
+        chat_y = max(0, min(chat_y, H - chat_h))
+        chat_w = min(chat_w, W - chat_x)
+        chat_h = min(chat_h, H - chat_y)
+
+        print(f"  Chat region detected: x={chat_x}, y={chat_y}, {chat_w}x{chat_h} ({selected_band})")
+        return (chat_x, chat_y, chat_w, chat_h)
+
+    except Exception as e:
+        print(f"  (Chat detection error: {e})")
+        return None
 
 
 def detect_cam_region(video_path: str, tmpdir: str):
@@ -1697,6 +2028,10 @@ def main():
                         help="무음 구간 자동 컷(점프컷)으로 템포를 높입니다")
     parser.add_argument("--cpu-encode", action="store_true",
                         help="GPU 가속 인코딩 끄기 (호환성 문제 시)")
+    parser.add_argument("--chat-analysis", action="store_true",
+                        help="화면 채팅창 자동 감지 & 반응 반영 (채팅이 없으면 자동 무시됨)")
+    parser.add_argument("--chat-region", default="auto", choices=["auto", "left", "right"],
+                        help="채팅 위치: auto=자동감지, left=왼쪽, right=오른쪽 (기본: auto)")
     args = parser.parse_args()
 
     if args.cpu_encode:
@@ -1757,6 +2092,76 @@ def main():
         print(f"[4/6] Analyzing audio energy...")
         energy, window_sec = compute_energy(wav_path, window_sec=0.5)
 
+        # 목소리 대역 에너지 (항상 계산)
+        print(f"  목소리 대역(200-3800Hz) 에너지 계산 중...")
+        voice_energy, _ = compute_voice_energy(wav_path, tmpdir, window_sec=0.5)
+
+        # 채팅 반응 분석 (선택사항)
+        chat_curve = None
+        chat_sample_sec = None
+        chat_weight = None
+        if args.chat_analysis:
+            cam_region = None
+            # cam_region auto 아닌 경우에도 채팅 제외용으로 detect_cam_region 시도
+            try:
+                cam_region = detect_cam_region(video_path, tmpdir)
+            except Exception:
+                pass
+
+            chat_region = None
+            if args.chat_region != "auto":
+                # 수동 채팅 위치 지정
+                W, H = get_media_size(video_path)
+                band_w = int(W * 0.25)  # 폭 = W의 25%
+
+                if args.chat_region == "left":
+                    chat_x = 0
+                elif args.chat_region == "right":
+                    chat_x = W - band_w
+                else:
+                    chat_x = 0
+
+                chat_y = int(H * 0.10)  # 상단 10% 여백
+                chat_h = int(H * 0.80)  # 높이 = H의 80%
+
+                # 캠 영역과 겹치면 겹치는 세로 구간을 h에서 잘라냄
+                if cam_region:
+                    cam_x, cam_y, cam_w, cam_h = cam_region
+                    # 캠 영역이 채팅 밴드의 x 범위와 겹치는지 확인
+                    if not (chat_x + band_w <= cam_x or cam_x + cam_w <= chat_x):
+                        # x 범위에서 겹침 -> y 범위 확인
+                        if cam_y < chat_y + chat_h and cam_y + cam_h > chat_y:
+                            # y 범위에서도 겹침 -> 겹치는 세로 구간을 제거
+                            overlap_y_start = max(chat_y, cam_y)
+                            overlap_y_end = min(chat_y + chat_h, cam_y + cam_h)
+                            overlap_h = overlap_y_end - overlap_y_start
+                            if overlap_h > 0:
+                                chat_h -= overlap_h
+
+                chat_region = (chat_x, chat_y, band_w, chat_h)
+                position_name = "왼쪽" if args.chat_region == "left" else "오른쪽"
+                print(f"  채팅 영역(수동-{position_name}): x={chat_x}, y={chat_y}, {band_w}x{chat_h}")
+            else:
+                # 자동 감지
+                print(f"  채팅 영역 감지 시도 중...")
+                chat_region = detect_chat_region(video_path, tmpdir, exclude_region=cam_region)
+
+            if chat_region:
+                print(f"  채팅 활동 곡선 계산 중...")
+                chat_curve, chat_sample_sec, active_ratio, chat_weight = compute_chat_activity(
+                    video_path, chat_region, duration, tmpdir, sample_sec=2.0
+                )
+                if len(chat_curve) > 0:
+                    print(f"  채팅 곡선: {len(chat_curve)} 포인트 "
+                          f"(min={chat_curve.min():.3f}, max={chat_curve.max():.3f}, "
+                          f"mean={chat_curve.mean():.3f})")
+                    print(f"  채팅 가중치: {chat_weight:.2f} (활동 비율 {active_ratio*100:.0f}%)")
+                else:
+                    print(f"  (채팅 곡선 비어있음 - 오디오 분석만 사용)")
+                    chat_curve = None
+            else:
+                print(f"  (채팅창 감지 실패 - 오디오 분석만 사용)")
+
         print(f"[5/6] Finding exciting segments (target: {args.target_min} min)...")
         target_sec = int(args.target_min * 60)
         segments = find_exciting_segments(
@@ -1765,6 +2170,10 @@ def main():
             expand_before=args.expand_before,
             expand_after=args.expand_after,
             bridge_gap=args.bridge_gap,
+            chat_curve=chat_curve,
+            chat_sample_sec=chat_sample_sec,
+            chat_weight=chat_weight,
+            voice_energy=voice_energy,
         )
 
         if not segments:

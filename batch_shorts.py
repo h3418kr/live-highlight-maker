@@ -25,6 +25,7 @@ from summarizer import (
     cut_and_concat,
     extract_audio,
     compute_energy,
+    compute_voice_energy,
     transcribe,
     build_srt,
     get_duration,
@@ -32,6 +33,9 @@ from summarizer import (
     copy_fonts_to,
     download_video,
     _gaussian_smooth,
+    detect_cam_region,
+    detect_chat_region,
+    compute_chat_activity,
 )
 from shorts import (
     SHORTS_W,
@@ -51,6 +55,10 @@ def pick_highlights(
     count: int,
     clip_len: float,
     duration: float,
+    chat_curve: np.ndarray = None,
+    chat_sample_sec: float = None,
+    chat_weight: float = None,
+    voice_energy: np.ndarray = None,
 ) -> List[Tuple[float, float]]:
     """Energy 배열에서 상위 N개 (겹치지 않는) 하이라이트 구간을 고른다.
 
@@ -63,6 +71,10 @@ def pick_highlights(
         count: 원하는 쇼츠 개수
         clip_len: 각 쇼츠 길이(초)
         duration: 전체 비디오 길이(초)
+        chat_curve: 채팅 활동 곡선 (없으면 오디오 에너지만 사용)
+        chat_sample_sec: 채팅 곡선의 샘플 간격(초)
+        chat_weight: 채팅 적응 가중치
+        voice_energy: 목소리 대역 에너지
 
     Returns:
         [(start, end), ...] 선택된 구간 목록 (시간순)
@@ -70,6 +82,48 @@ def pick_highlights(
     # 에너지 평활화
     sigma = 10.0 / window_sec
     smoothed = _gaussian_smooth(energy, sigma)
+
+    # z-score 정규화: 전체 에너지
+    energy_mean = np.mean(smoothed)
+    energy_std = np.std(smoothed)
+    if energy_std > 1e-6:
+        energy_z = (smoothed - energy_mean) / energy_std
+    else:
+        energy_z = np.zeros_like(smoothed)
+
+    # z-score 정규화: 목소리 대역 에너지
+    voice_z = np.zeros_like(energy_z)
+    if voice_energy is not None and len(voice_energy) > 0:
+        voice_energy_smooth = _gaussian_smooth(voice_energy, sigma)
+        voice_mean = np.mean(voice_energy_smooth)
+        voice_std = np.std(voice_energy_smooth)
+        if voice_std > 1e-6:
+            voice_z = (voice_energy_smooth - voice_mean) / voice_std
+
+    # 결합 점수 계산
+    if chat_curve is not None and len(chat_curve) > 0 and chat_sample_sec is not None and chat_weight is not None:
+        # 채팅 z-score 정규화
+        chat_mean = np.mean(chat_curve)
+        chat_std = np.std(chat_curve)
+        if chat_std > 1e-6:
+            chat_z = (chat_curve - chat_mean) / chat_std
+        else:
+            chat_z = np.zeros_like(chat_curve)
+
+        # 채팅 곡선을 에너지 윈도 타임라인으로 리샘플
+        energy_times = np.arange(len(smoothed)) * window_sec
+        chat_times = np.arange(len(chat_curve)) * chat_sample_sec
+        chat_z_resampled = np.interp(energy_times, chat_times, chat_z, left=0.0, right=0.0)
+
+        # 결합 점수: 0.5 * energy_z + 1.0 * voice_z + chat_weight * chat_z
+        smoothed = 0.5 * energy_z + 1.0 * voice_z + chat_weight * chat_z_resampled
+        print(f"  채팅 가중치: {chat_weight:.2f}")
+        print("  (목소리 반응 + 채팅 반응 반영된 점수로 분석 중)")
+    else:
+        # 채팅이 없어도 목소리는 적용
+        smoothed = 0.5 * energy_z + 1.0 * voice_z
+        if len(voice_z) > 0 and np.any(voice_z != 0):
+            print("  (목소리 반응 반영된 점수로 분석 중)")
 
     # 피크 감지 (±20s 윈도우에서 로컬 최대)
     threshold = np.percentile(smoothed, 70)
@@ -301,6 +355,10 @@ def main():
     )
     parser.add_argument("--cpu-encode", action="store_true",
                         help="GPU 가속 인코딩 끄기 (호환성 문제 시)")
+    parser.add_argument("--chat-analysis", action="store_true",
+                        help="화면 채팅창 자동 감지 & 반응 반영 (채팅이 없으면 자동 무시됨)")
+    parser.add_argument("--chat-region", default="auto", choices=["auto", "left", "right"],
+                        help="채팅 위치: auto=자동감지, left=왼쪽, right=오른쪽 (기본: auto)")
     args = parser.parse_args()
 
     if args.cpu_encode:
@@ -336,12 +394,86 @@ def main():
         wav_path = os.path.join(tmpdir, "audio.wav")
         extract_audio(video_path, wav_path)
         energy, window_sec = compute_energy(wav_path)
+
+        # 목소리 대역 에너지 (항상 계산)
+        print(f"  목소리 대역(200-3800Hz) 에너지 계산 중...")
+        voice_energy, _ = compute_voice_energy(wav_path, tmpdir, window_sec=0.5)
+
+        # 채팅 반응 분석 (선택사항)
+        chat_curve = None
+        chat_sample_sec = None
+        chat_weight = None
+        if args.chat_analysis:
+            cam_region = None
+            try:
+                cam_region = detect_cam_region(video_path, tmpdir)
+            except Exception:
+                pass
+
+            chat_region = None
+            if args.chat_region != "auto":
+                # 수동 채팅 위치 지정
+                W, H = get_media_size(video_path)
+                band_w = int(W * 0.25)  # 폭 = W의 25%
+
+                if args.chat_region == "left":
+                    chat_x = 0
+                elif args.chat_region == "right":
+                    chat_x = W - band_w
+                else:
+                    chat_x = 0
+
+                chat_y = int(H * 0.10)  # 상단 10% 여백
+                chat_h = int(H * 0.80)  # 높이 = H의 80%
+
+                # 캠 영역과 겹치면 겹치는 세로 구간을 h에서 잘라냄
+                if cam_region:
+                    cam_x, cam_y, cam_w, cam_h = cam_region
+                    # 캠 영역이 채팅 밴드의 x 범위와 겹치는지 확인
+                    if not (chat_x + band_w <= cam_x or cam_x + cam_w <= chat_x):
+                        # x 범위에서 겹침 -> y 범위 확인
+                        if cam_y < chat_y + chat_h and cam_y + cam_h > chat_y:
+                            # y 범위에서도 겹침 -> 겹치는 세로 구간을 제거
+                            overlap_y_start = max(chat_y, cam_y)
+                            overlap_y_end = min(chat_y + chat_h, cam_y + cam_h)
+                            overlap_h = overlap_y_end - overlap_y_start
+                            if overlap_h > 0:
+                                chat_h -= overlap_h
+
+                chat_region = (chat_x, chat_y, band_w, chat_h)
+                position_name = "왼쪽" if args.chat_region == "left" else "오른쪽"
+                print(f"  채팅 영역(수동-{position_name}): x={chat_x}, y={chat_y}, {band_w}x{chat_h}")
+            else:
+                # 자동 감지
+                print(f"  채팅 영역 감지 시도 중...")
+                chat_region = detect_chat_region(video_path, tmpdir, exclude_region=cam_region)
+
+            if chat_region:
+                print(f"  채팅 활동 곡선 계산 중...")
+                chat_curve, chat_sample_sec, active_ratio, chat_weight = compute_chat_activity(
+                    video_path, chat_region, duration, tmpdir, sample_sec=2.0
+                )
+                if len(chat_curve) > 0:
+                    print(f"  채팅 곡선: {len(chat_curve)} 포인트 "
+                          f"(min={chat_curve.min():.3f}, max={chat_curve.max():.3f}, "
+                          f"mean={chat_curve.mean():.3f})")
+                    print(f"  채팅 가중치: {chat_weight:.2f} (활동 비율 {active_ratio*100:.0f}%)")
+                else:
+                    print(f"  (채팅 곡선 비어있음 - 오디오 분석만 사용)")
+                    chat_curve = None
+            else:
+                print(f"  (채팅창 감지 실패 - 오디오 분석만 사용)")
+
         highlights = pick_highlights(
             energy,
             window_sec,
             args.count,
             args.clip_len,
             duration,
+            chat_curve=chat_curve,
+            chat_sample_sec=chat_sample_sec,
+            chat_weight=chat_weight,
+            voice_energy=voice_energy,
         )
         if not highlights:
             print("ERROR: 하이라이트를 선택할 수 없습니다.")

@@ -40,6 +40,7 @@ SFX_CODES = ["none", "whoosh", "swoosh", "beep", "pop", "impact"]
 WMPOS_CODES = ["tl", "tr", "bl", "br"]  # 좌상 우상 좌하 우하
 WMKEY_CODES = ["", "white", "black"]  # 배경 투명 처리: 없음 / 흰색 / 검정
 CAMPOS_CODES = ["auto", "br", "bl", "tr", "tl"]  # 캠 위치: 자동감지 우하 좌하 우상 좌상
+CHATPOS_CODES = ["auto", "left", "right"]  # 채팅 위치: 자동감지, 왼쪽, 오른쪽
 CLOSEUPFREQ_CODES = [1, 2, 3]  # 클로즈업 빈도: 1=매 전환, 2=2회당 1회, 3=3회당 1회
 PUNCHIN_CODES = ["none", "low", "mid", "high"]  # 펀치인 레벨: 끔, 적게, 보통, 많이
 
@@ -134,6 +135,10 @@ STRINGS = {
         "analyze_hint": "(분석이 끝나면 후보 구간이 수동 하이라이트 탭에 자동으로 채워집니다)",
         "jump_cut": "무음 구간 자동 컷 (점프컷)",
         "jump_cut_hint": "(말 없는 구간을 잘라 템포를 높입니다 — 자막은 자동 재생성)",
+        "chat_analysis": "채팅 반응 반영 (화면 채팅창 자동 감지)",
+        "chat_analysis_hint": "(채팅창이 없으면 자동으로 무시됩니다)",
+        "chat_pos": "채팅 위치",
+        "chatpos_values_ko": ["자동 감지", "왼쪽", "오른쪽"],
         "hwenc": "GPU 가속 인코딩",
         "hwenc_hint": "(지원하는 GPU가 있으면 자동 사용 — 호환성 문제 시 끔)",
         "msg_analyze_done": ("하이라이트 후보 분석 완료!\n\n"
@@ -309,6 +314,10 @@ STRINGS = {
         "analyze_hint": "(when done, the candidate ranges are loaded into the Manual highlights tab)",
         "jump_cut": "Remove silent gaps (Jump cut)",
         "jump_cut_hint": "(tighten pacing by cutting silent pauses — subtitles auto-regenerated)",
+        "chat_analysis": "Use chat reaction (auto-detect on-screen chat)",
+        "chat_analysis_hint": "(ignored automatically if no chat overlay)",
+        "chat_pos": "Chat position",
+        "chatpos_values_en": ["Auto-detect", "Left", "Right"],
         "hwenc": "GPU-accelerated encoding",
         "hwenc_hint": "(auto-used if supported GPU is available — disable if compatibility issues)",
         "msg_analyze_done": ("Highlight analysis finished!\n\n"
@@ -703,6 +712,29 @@ def build_summarizer_tab(nb):
     chk_hwenc.grid(row=16, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
     _label(opt, "hwenc_hint", row=17, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
+    # 채팅 반응 반영
+    chat_analysis_var = tk.BooleanVar(value=True)
+    chk_chat_analysis = ttk.Checkbutton(opt, text=_t("chat_analysis"), variable=chat_analysis_var)
+    reg("text", chk_chat_analysis, "chat_analysis")
+    chk_chat_analysis.grid(row=18, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "chat_analysis_hint", row=19, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
+
+    # 채팅 위치
+    def _get_chatpos_values():
+        lang = _current_lang()
+        if lang == "ko":
+            return _t("chatpos_values_ko")
+        else:
+            return _t("chatpos_values_en")
+
+    chat_pos_var = tk.StringVar(value=CHATPOS_CODES[0])
+    lbl_chat_pos = ttk.Label(opt, text=_t("chat_pos"))
+    reg("text", lbl_chat_pos, "chat_pos")
+    lbl_chat_pos.grid(row=20, column=0, sticky="w", padx=8)
+    chat_pos_combo = ttk.Combobox(opt, textvariable=chat_pos_var, values=_get_chatpos_values(),
+                                   state="readonly", width=15)
+    chat_pos_combo.grid(row=20, column=1, columnspan=3, sticky="w", padx=8)
+
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_summarize"))
     reg("var", btn_label_var, "btn_summarize")
@@ -747,6 +779,11 @@ def build_summarizer_tab(nb):
             cmd.append("--analyze-only")
         if jump_cut_var.get():
             cmd.append("--jump-cut")
+        if chat_analysis_var.get():
+            cmd.append("--chat-analysis")
+            chat_pos_idx = CHATPOS_CODES.index(chat_pos_var.get())
+            if chat_pos_idx > 0:  # "auto"가 아닌 경우만 추가
+                cmd += ["--chat-region", CHATPOS_CODES[chat_pos_idx]]
         if not hwenc_var.get():
             cmd.append("--cpu-encode")
 
@@ -1641,6 +1678,28 @@ def build_autoshorts_tab(nb):
     reg("text", gemini_hint, "autoshorts_gemini_hint")
     gemini_hint.grid(row=7, column=0, columnspan=4, sticky="w", padx=8, pady=(0, 3))
 
+    # 채팅 반응 반영
+    autoshorts_chat_analysis_var = tk.BooleanVar(value=False)
+    chk_autoshorts_chat_analysis = ttk.Checkbutton(opt, text=_t("chat_analysis"), variable=autoshorts_chat_analysis_var)
+    reg("text", chk_autoshorts_chat_analysis, "chat_analysis")
+    chk_autoshorts_chat_analysis.grid(row=8, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 0))
+
+    # 채팅 위치
+    def _get_autoshorts_chatpos_values():
+        lang = _current_lang()
+        if lang == "ko":
+            return _t("chatpos_values_ko")
+        else:
+            return _t("chatpos_values_en")
+
+    autoshorts_chat_pos_var = tk.StringVar(value=CHATPOS_CODES[0])
+    lbl_autoshorts_chat_pos = ttk.Label(opt, text=_t("chat_pos"))
+    reg("text", lbl_autoshorts_chat_pos, "chat_pos")
+    lbl_autoshorts_chat_pos.grid(row=8, column=2, sticky="w", padx=(16, 4))
+    autoshorts_chat_pos_combo = ttk.Combobox(opt, textvariable=autoshorts_chat_pos_var,
+                                             values=_get_autoshorts_chatpos_values(), state="readonly", width=15)
+    autoshorts_chat_pos_combo.grid(row=8, column=3, sticky="w", padx=8)
+
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_autoshorts"))
     reg("var", btn_label_var, "btn_autoshorts")
@@ -1704,6 +1763,11 @@ def build_autoshorts_tab(nb):
             cmd += ["--ai-title", "--gemini-key", gkey]
         if not autoshorts_hwenc_var.get():
             cmd.append("--cpu-encode")
+        if autoshorts_chat_analysis_var.get():
+            cmd.append("--chat-analysis")
+            autoshorts_chat_pos_idx = CHATPOS_CODES.index(autoshorts_chat_pos_var.get())
+            if autoshorts_chat_pos_idx > 0:  # "auto"가 아닌 경우만 추가
+                cmd += ["--chat-region", CHATPOS_CODES[autoshorts_chat_pos_idx]]
 
         log.config(state="normal")
         log.delete("1.0", tk.END)
