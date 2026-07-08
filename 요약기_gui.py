@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 
 # ── sv-ttk availability check ─────────────────────────────────────────────────────
 try:
@@ -138,7 +138,7 @@ STRINGS = {
         "chat_analysis": "채팅 반응 반영 (화면 채팅창 자동 감지)",
         "chat_analysis_hint": "(채팅창이 없으면 자동으로 무시됩니다)",
         "chat_pos": "채팅 위치",
-        "chatpos_values_ko": ["자동 감지", "왼쪽", "오른쪽"],
+        "chatpos_values": ["자동 감지", "왼쪽", "오른쪽"],
         "hwenc": "GPU 가속 인코딩",
         "hwenc_hint": "(지원하는 GPU가 있으면 자동 사용 — 호환성 문제 시 끔)",
         "msg_analyze_done": ("하이라이트 후보 분석 완료!\n\n"
@@ -317,7 +317,7 @@ STRINGS = {
         "chat_analysis": "Use chat reaction (auto-detect on-screen chat)",
         "chat_analysis_hint": "(ignored automatically if no chat overlay)",
         "chat_pos": "Chat position",
-        "chatpos_values_en": ["Auto-detect", "Left", "Right"],
+        "chatpos_values": ["Auto-detect", "Left", "Right"],
         "hwenc": "GPU-accelerated encoding",
         "hwenc_hint": "(auto-used if supported GPU is available — disable if compatibility issues)",
         "msg_analyze_done": ("Highlight analysis finished!\n\n"
@@ -720,19 +720,12 @@ def build_summarizer_tab(nb):
     _label(opt, "chat_analysis_hint", row=19, column=0, columnspan=4, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # 채팅 위치
-    def _get_chatpos_values():
-        lang = _current_lang()
-        if lang == "ko":
-            return _t("chatpos_values_ko")
-        else:
-            return _t("chatpos_values_en")
-
-    chat_pos_var = tk.StringVar(value=CHATPOS_CODES[0])
     lbl_chat_pos = ttk.Label(opt, text=_t("chat_pos"))
     reg("text", lbl_chat_pos, "chat_pos")
     lbl_chat_pos.grid(row=20, column=0, sticky="w", padx=8)
-    chat_pos_combo = ttk.Combobox(opt, textvariable=chat_pos_var, values=_get_chatpos_values(),
-                                   state="readonly", width=15)
+    chat_pos_combo = ttk.Combobox(opt, values=_t("chatpos_values"), state="readonly", width=15)
+    chat_pos_combo.current(0)  # 자동 감지
+    reg("combo", (chat_pos_combo, "chatpos_values"), "chatpos_values")
     chat_pos_combo.grid(row=20, column=1, columnspan=3, sticky="w", padx=8)
 
     # 실행 버튼
@@ -781,7 +774,7 @@ def build_summarizer_tab(nb):
             cmd.append("--jump-cut")
         if chat_analysis_var.get():
             cmd.append("--chat-analysis")
-            chat_pos_idx = CHATPOS_CODES.index(chat_pos_var.get())
+            chat_pos_idx = max(chat_pos_combo.current(), 0)
             if chat_pos_idx > 0:  # "auto"가 아닌 경우만 추가
                 cmd += ["--chat-region", CHATPOS_CODES[chat_pos_idx]]
         if not hwenc_var.get():
@@ -1685,19 +1678,12 @@ def build_autoshorts_tab(nb):
     chk_autoshorts_chat_analysis.grid(row=8, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 0))
 
     # 채팅 위치
-    def _get_autoshorts_chatpos_values():
-        lang = _current_lang()
-        if lang == "ko":
-            return _t("chatpos_values_ko")
-        else:
-            return _t("chatpos_values_en")
-
-    autoshorts_chat_pos_var = tk.StringVar(value=CHATPOS_CODES[0])
     lbl_autoshorts_chat_pos = ttk.Label(opt, text=_t("chat_pos"))
     reg("text", lbl_autoshorts_chat_pos, "chat_pos")
     lbl_autoshorts_chat_pos.grid(row=8, column=2, sticky="w", padx=(16, 4))
-    autoshorts_chat_pos_combo = ttk.Combobox(opt, textvariable=autoshorts_chat_pos_var,
-                                             values=_get_autoshorts_chatpos_values(), state="readonly", width=15)
+    autoshorts_chat_pos_combo = ttk.Combobox(opt, values=_t("chatpos_values"), state="readonly", width=15)
+    autoshorts_chat_pos_combo.current(0)  # 자동 감지
+    reg("combo", (autoshorts_chat_pos_combo, "chatpos_values"), "chatpos_values")
     autoshorts_chat_pos_combo.grid(row=8, column=3, sticky="w", padx=8)
 
     # 실행 버튼
@@ -1765,7 +1751,7 @@ def build_autoshorts_tab(nb):
             cmd.append("--cpu-encode")
         if autoshorts_chat_analysis_var.get():
             cmd.append("--chat-analysis")
-            autoshorts_chat_pos_idx = CHATPOS_CODES.index(autoshorts_chat_pos_var.get())
+            autoshorts_chat_pos_idx = max(autoshorts_chat_pos_combo.current(), 0)
             if autoshorts_chat_pos_idx > 0:  # "auto"가 아닌 경우만 추가
                 cmd += ["--chat-region", CHATPOS_CODES[autoshorts_chat_pos_idx]]
 

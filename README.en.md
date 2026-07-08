@@ -9,7 +9,7 @@
 **A video tool that automatically analyzes long live-stream VODs, extracts only the best moments (highlights),**
 **and layers on subtitles, transitions and background music to produce an upload-ready finished video.**
 
-Powered by faster-whisper speech recognition for rapid subtitles (3x faster than before) · **GPU-accelerated encoding (auto-detected)** · **closeup transitions (auto-detect camera)** and ffmpeg · comes with a **graphical UI (GUI)** so you don't need to know Python · **modern dark theme with Windows 11 styling (sv-ttk)** · **automatic update notifications**
+Powered by faster-whisper speech recognition for rapid subtitles (3x faster than before) · **chat-reaction & voice-based highlight detection** · **GPU-accelerated encoding (auto-detected)** · **closeup transitions (auto-detect camera)** and ffmpeg · comes with a **graphical UI (GUI)** so you don't need to know Python · **modern dark theme with Windows 11 styling (sv-ttk)** · **automatic update notifications**
 
 </div>
 
@@ -19,7 +19,7 @@ Powered by faster-whisper speech recognition for rapid subtitles (3x faster than
 
 Rewatching and editing an hours-long live stream from scratch is exhausting. This tool automates that process.
 
-> **Just paste a VOD URL → it finds the hottest moments (highlights) on its own → cuts them into a short summary video at your target length → and even adds subtitles.**
+> **Just paste a VOD URL → it finds moments where the streamer's voice & chat reactions peaked (highlights) on its own → cuts them into a short summary video at your target length → and even adds subtitles.**
 
 It was built with game-stream highlight editing in mind, but works just as well on any live stream or video.
 
@@ -142,6 +142,8 @@ Below is the actual program screen. Just follow the numbers.
 | GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
 | Auto silence cutting | Remove silent gaps to tighten pacing (subtitles auto-regenerated) | off |
 | Analyze candidates only | Skip building the video; extract candidate ranges and **auto-fill the Manual highlights tab** (skips Whisper, so it's fast) | off |
+| Chat reaction boost | Amplify the highlight score when on-screen chat erupts (auto-disabled if no chat detected) | on |
+| Chat position | Auto-detect / left / right | auto-detect |
 
 **Button: click "Download & Summarize"** → download → analyze → edit, all automatic.
 When finished, three files appear in the output folder:
@@ -240,6 +242,8 @@ Generate multiple vertical shorts from a single video's highlights in one pass. 
 | Subtitle font | Font: Paperlogy / Malgun Gothic | `Paperlogy` |
 | Subtitle size | Size of the burned-in captions (in real 1080x1920 pixels) | `54` |
 | GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
+| Chat reaction boost | Amplify the highlight score when on-screen chat erupts (auto-disabled if no chat detected) | on |
+| Chat position | Auto-detect / left / right | auto-detect |
 | Add AI titles (Gemini) | AI analyzes audio and auto-generates title text to display on/off | off |
 | Gemini API key | Paste a free key (saved after first use). See how to get one below | — |
 
