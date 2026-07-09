@@ -124,7 +124,7 @@ Below is the actual program screen. Just follow the numbers.
 |------|------|--------|
 | URL or local file | Paste the VOD address (YouTube, Chzzk, SOOP, Twitch supported) to summarize, or click **"Pick file"** to load a video you recorded yourself | — |
 | Output folder | Where the result files are saved | `output` |
-| Target length (min) | Desired length of the summary | `10` min |
+| Target length (min) | Desired length of the summary. With auto silence cutting enabled, the duration of removed silence is predicted in advance and that much additional time is selected, so the final video matches the target length | `10` min |
 | Whisper model | Subtitle accuracy (bigger = more accurate, slower) | `small` recommended |
 | Language | Spoken language | `ko` (Korean) |
 | Quality | 360 / 480 / **720** / 1080 | `720` recommended |
@@ -140,7 +140,7 @@ Below is the actual program screen. Just follow the numbers.
 | Transition SFX | SFX at the transition: none / whoosh / swoosh / beep / pop / impact | `whoosh` |
 | Keep-original folder | Folder to preserve the downloaded source video (empty = delete after processing) | empty |
 | GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
-| Auto silence cutting | Remove silent gaps to tighten pacing (subtitles auto-regenerated) | off |
+| Auto silence cutting | Remove silent gaps to tighten pacing (subtitles auto-regenerated). When enabled, automatically compensates to match the target length | off |
 | Analyze candidates only | Skip building the video; extract candidate ranges and **auto-fill the Manual highlights tab** (skips Whisper, so it's fast) | off |
 | Chat reaction boost | Amplify the highlight score when on-screen chat erupts (auto-disabled if no chat detected) | on |
 | Chat position | Auto-detect / left / right | auto-detect |
