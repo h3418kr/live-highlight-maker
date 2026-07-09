@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import numpy as np
 
@@ -942,22 +942,32 @@ def fmt_hms(sec: float, force_hours: bool = False) -> str:
     return f"{m:d}:{s:02d}"
 
 
-def build_chapters(segments: List[Tuple[float, float]], label: str = "하이라이트") -> str:
+def build_chapters(segments: List[Tuple[float, float]], label: str = "하이라이트",
+                   original_start_times: Optional[List[float]] = None) -> str:
     """구간 목록으로 유튜브 챕터 텍스트를 만든다.
 
     출력 영상 타임라인 기준(누적 길이)으로 각 하이라이트의 시작 시각을 찍는다.
     전환 효과는 클립 내부에서 처리되어 전체 길이가 변하지 않으므로
     단순 누적 합이 곧 출력 타임스탬프다. 유튜브 챕터는 반드시 00:00 부터
     시작해야 하므로 첫 줄은 항상 00:00 이다.
+
+    original_start_times: 지정 시 (True, keep_segments)를 받은 silence_cut 후
+                         map_original_time_to_cut로 계산한 컷 후 타임라인.
+                         None이면 기존 방식(명목 누적).
     """
     lines = []
     t = 0.0
     for i, (s, e) in enumerate(segments, 1):
+        # original_start_times가 주어졌으면 그것을 타임스탬프로 사용, 아니면 누적합
+        if original_start_times is not None:
+            t = original_start_times[i - 1]
         m, sec_ = int(t // 60), int(round(t % 60))
         h = m // 60
         stamp = f"{h:d}:{m % 60:02d}:{sec_:02d}" if h else f"{m:02d}:{sec_:02d}"
         lines.append(f"{stamp} {label} {i} (원본 {fmt_hms(s, force_hours=True)})")
-        t += e - s
+        # 다음 반복을 위해 누적
+        if original_start_times is None:
+            t += e - s
     return "\n".join(lines) + "\n"
 
 
@@ -1857,8 +1867,32 @@ def compute_punchin_times(video_path: str, segments: List[Tuple[float, float]], 
 
 
 
+def map_original_time_to_cut(original_time: float, keep_segments: List[Tuple[float, float]]) -> float:
+    """컷 전 타임라인 t를 컷 후 타임라인으로 변환.
+
+    keep_segments: [(s0, e0), (s1, e1), ...] 정렬된 유지 구간 (컷 전 기준)
+
+    반환: t 이전의 유지된 구간 길이 합
+    - t가 keep 구간 안이면, 그 구간 시작까지의 누적 + (t - 구간시작)
+    - t가 cut 구간 안이면, t 직전 keep 구간의 끝까지의 누적
+    """
+    result = 0.0
+    for seg_start, seg_end in keep_segments:
+        if seg_start >= original_time:
+            # t는 이 구간 전에 있음
+            break
+        if seg_end <= original_time:
+            # 이 구간 전체가 t 이전
+            result += seg_end - seg_start
+        else:
+            # t가 이 구간 안: 구간 시작부터 t까지
+            result += original_time - seg_start
+            break
+    return result
+
+
 def silence_cut(video_path: str, out_path: str, tmpdir: str, threshold_db: float = -30.0,
-                min_silence: float = 0.4, keep_pad: float = 0.06) -> bool:
+                min_silence: float = 0.4, keep_pad: float = 0.06) -> Tuple[bool, Optional[List[Tuple[float, float]]]]:
     """Detect silent gaps and remove them (jump cut) to tighten pacing.
 
     Algorithm:
@@ -1866,12 +1900,13 @@ def silence_cut(video_path: str, out_path: str, tmpdir: str, threshold_db: float
     2. Invert silence list to get "keep" (non-silent) segments
     3. Add keep_pad to segment boundaries (soften cuts), clamp to [0, duration]
     4. Merge segments closer than ~0.15s and drop segments < ~0.30s
-    5. If nothing to cut (kept ≈ full duration, or 0/1 segments), return False (no-op)
-    6. Otherwise cut_and_concat() the kept segments and return True
+    5. If nothing to cut (kept ≈ full duration, or 0/1 segments), return (False, None) (no-op)
+    6. Otherwise cut_and_concat() the kept segments and return (True, merged)
 
-    Returns: True if silence was cut, False if no significant silence found (original unchanged).
+    Returns: (True, keep_segments) if silence was cut, (False, None) if no significant silence found.
+             keep_segments is the list of kept segments (after padding and merging) in original timeline.
     Prints summary: original duration → kept duration, % removed.
-    Never crashes: wrap detection in try/except, fall back to False on any error.
+    Never crashes: wrap detection in try/except, fall back to (False, None) on any error.
     """
     try:
         # Get video duration
@@ -1892,7 +1927,7 @@ def silence_cut(video_path: str, out_path: str, tmpdir: str, threshold_db: float
         _, stderr = proc.communicate()
 
         if proc.returncode != 0:
-            return False
+            return (False, None)
 
         # Parse silence_start and silence_end lines from ffmpeg stderr
         # Example: "silence_start: 1.234" and "silence_end: 2.345"
@@ -1957,7 +1992,7 @@ def silence_cut(video_path: str, out_path: str, tmpdir: str, threshold_db: float
 
         # If we kept almost everything or have 0/1 segments, skip cutting
         if not merged or len(merged) <= 1 or abs(total_kept - dur) < 0.5:
-            return False
+            return (False, None)
 
         # Cut and concatenate
         cut_and_concat(video_path, merged, out_path, tmpdir,
@@ -1967,11 +2002,11 @@ def silence_cut(video_path: str, out_path: str, tmpdir: str, threshold_db: float
         pct = (1.0 - total_kept / dur) * 100.0 if dur > 0 else 0.0
         print(f"  (무음 구간 제거: {dur:.1f}s → {total_kept:.1f}s, -{pct:.1f}%)")
 
-        return True
+        return (True, merged)
 
     except Exception as e:
         # Fall back gracefully on any error
-        return False
+        return (False, None)
 
 
 def safe_filename(title: str) -> str:
@@ -2288,11 +2323,13 @@ def main():
         # Apply jump-cut if requested
         summary_video = summary_raw
         srt_segments = segments  # segments list for SRT (may change if jump-cut happens)
+        keep_segments_for_chapters = None
         if args.jump_cut:
             summary_cut = os.path.join(tmpdir, "summary_cut.mp4")
-            cut_happened = silence_cut(summary_raw, summary_cut, tmpdir)
+            cut_happened, keep_segments = silence_cut(summary_raw, summary_cut, tmpdir)
             if cut_happened:
                 summary_video = summary_cut
+                keep_segments_for_chapters = keep_segments
                 # Re-generate SRT if subtitles are on (jump-cut changes timing)
                 wav_path_cut = os.path.join(tmpdir, "audio_cut.wav")
                 extract_audio(summary_video, wav_path_cut)
@@ -2310,8 +2347,20 @@ def main():
 
         # 유튜브 챕터 텍스트: 설명란에 그대로 붙여넣으면 챕터가 생긴다.
         out_chapters = str(output_dir / f"{safe_title}_chapters.txt")
+        if keep_segments_for_chapters:
+            # 점프컷 후: 타임라인 재매핑
+            original_starts = []
+            t_nominal = 0.0
+            for s, e in segments:
+                original_starts.append(t_nominal)
+                t_nominal += e - s
+            mapped_starts = [map_original_time_to_cut(t, keep_segments_for_chapters) for t in original_starts]
+            chapters_text = build_chapters(segments, original_start_times=mapped_starts)
+        else:
+            # 점프컷 미사용: 기존 방식
+            chapters_text = build_chapters(segments)
         with open(out_chapters, "w", encoding="utf-8") as f:
-            f.write(build_chapters(segments))
+            f.write(chapters_text)
 
         print(f"\nDone!")
         print(f"  Video    : {out_video}")

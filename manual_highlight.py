@@ -300,11 +300,13 @@ def main():
                        punchins=punchins)
 
         # Apply jump-cut if requested
+        keep_segments_for_chapters = None
         if args.jump_cut:
             base_video_cut = os.path.join(tmpdir, "highlight_cut.mp4")
-            cut_happened = silence_cut(base_video, base_video_cut, tmpdir)
+            cut_happened, keep_segments = silence_cut(base_video, base_video_cut, tmpdir)
             if cut_happened:
                 base_video = base_video_cut
+                keep_segments_for_chapters = keep_segments
 
         if args.subtitles:
             print(f"[2/3] 완성 영상에서 오디오 추출...")
@@ -326,8 +328,21 @@ def main():
                            label_size=args.label_size)
 
     # 유튜브 챕터 텍스트: 설명란에 그대로 붙여넣으면 챕터가 생긴다.
+    if keep_segments_for_chapters:
+        # 점프컷 후: 타임라인 재매핑
+        from summarizer import map_original_time_to_cut
+        original_starts = []
+        t_nominal = 0.0
+        for s, e in segments:
+            original_starts.append(t_nominal)
+            t_nominal += e - s
+        mapped_starts = [map_original_time_to_cut(t, keep_segments_for_chapters) for t in original_starts]
+        chapters_text = build_chapters(segments, original_start_times=mapped_starts)
+    else:
+        # 점프컷 미사용: 기존 방식
+        chapters_text = build_chapters(segments)
     with open(out_chapters, "w", encoding="utf-8") as f:
-        f.write(build_chapters(segments))
+        f.write(chapters_text)
 
     print(f"\nDone!")
     print(f"  Video    : {out_video}")
