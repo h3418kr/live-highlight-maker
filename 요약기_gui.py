@@ -300,6 +300,8 @@ STRINGS = {
         "opt_burn": "자막 영상에 새겨넣기(하드섭)",
         "bgm_volume": "배경음악 볼륨 (0~1)",
         "opt_loudnorm": "음량 정규화 (유튜브 -14 LUFS)",
+        "teaser": "인트로 티저 자동 (하이라이트 예고편)",
+        "teaser_cuts": ["2개", "3개", "4개"],
         "btn_finalize": "완성 영상 만들기",
         # file dialog titles
         "dlg_outdir": "출력 폴더 선택",
@@ -482,6 +484,8 @@ STRINGS = {
         "opt_burn": "Burn subtitles (hardsub)",
         "bgm_volume": "BGM volume (0-1)",
         "opt_loudnorm": "Normalize loudness (YouTube -14 LUFS)",
+        "teaser": "Auto intro teaser (highlight preview)",
+        "teaser_cuts": ["2 cuts", "3 cuts", "4 cuts"],
         "btn_finalize": "Make Final Video",
         # file dialog titles
         "dlg_outdir": "Select output folder",
@@ -1588,11 +1592,25 @@ def build_finalize_tab(nb):
     reg("text", chk_labels, "auto_labels")
     chk_labels.grid(row=8, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 0))
     _label(opt, "auto_labels_hint", row=8, column=2, columnspan=2, sticky="w", padx=(8, 4), pady=(8, 0))
-    _label(opt, "gemini_key", row=9, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
+
+    # 인트로 티저 자동
+    teaser_var = tk.BooleanVar(value=False)
+    reg_setting("fin.teaser", "var", teaser_var)
+    chk_teaser = ttk.Checkbutton(opt, text=_t("teaser"), variable=teaser_var)
+    reg("text", chk_teaser, "teaser")
+    chk_teaser.grid(row=9, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 0))
+    _label(opt, "teaser_cuts", row=9, column=2, sticky="w", padx=(16, 4), pady=(6, 0))
+    teaser_cuts_combo = ttk.Combobox(opt, values=_t("teaser_cuts"), width=8, state="readonly")
+    teaser_cuts_combo.current(1)  # 기본 3개
+    reg("combo", (teaser_cuts_combo, "teaser_cuts"), "teaser_cuts")
+    reg_setting("fin.teaser_cuts", "combo", teaser_cuts_combo)
+    teaser_cuts_combo.grid(row=9, column=3, sticky="w", pady=(6, 0))
+
+    _label(opt, "gemini_key", row=10, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
     gemini_key_var = tk.StringVar(value=load_gemini_key())
     ttk.Entry(opt, textvariable=gemini_key_var, width=28, show="•").grid(
-        row=9, column=1, columnspan=2, sticky="ew", pady=(0, 3))
-    _label(opt, "gemini_key_hint", row=9, column=3, sticky="w", padx=(8, 4), pady=(0, 3))
+        row=10, column=1, columnspan=2, sticky="ew", pady=(0, 3))
+    _label(opt, "gemini_key_hint", row=10, column=3, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_finalize"))
@@ -1657,6 +1675,12 @@ def build_finalize_tab(nb):
         # GPU 가속 인코딩
         if not final_hwenc_var.get():
             cmd.append("--cpu-encode")
+
+        # 인트로 티저 자동
+        if teaser_var.get():
+            cuts_idx = max(teaser_cuts_combo.current(), 0)
+            cuts_values = [2, 3, 4]  # "2개", "3개", "4개"
+            cmd += ["--teaser", str(cuts_values[cuts_idx])]
 
         # AI 자동 키워드 (Gemini)
         gkey = gemini_key_var.get().strip()

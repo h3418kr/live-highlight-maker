@@ -19,6 +19,8 @@ import sys
 import tempfile
 import urllib.request
 
+import numpy as np
+
 
 def _setup_bundled_paths():
     """포터블 배포용: 스크립트 폴더 옆의 ffmpeg/bin 을 PATH 에 추가."""
@@ -35,7 +37,7 @@ _setup_bundled_paths()
 # summarizer 모듈의 GPU 인코딩 헬퍼 import
 # (포터블 임베디드 파이썬은 현재 스크립트 폴더를 sys.path에 자동 추가하지 않으므로 명시)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from summarizer import video_encode_args
+from summarizer import video_encode_args, extract_audio, compute_energy, compute_voice_energy
 
 # ── Font helper (bundled fonts) ──────────────────────────────────────────────
 def bundled_fonts_dir():
@@ -460,6 +462,121 @@ def render_main(video: str, srt_name: str, w: int, h: int, fps: str,
     run_ffmpeg(cmd, label="(본편)", cwd=cwd)
 
 
+def _find_energy_peaks(energy: np.ndarray, window_sec: float, duration: float,
+                       n_peaks: int = 3, min_gap: float = 15.0,
+                       exclude_start: float = 3.0, exclude_end: float = 3.0) -> list:
+    """에너지 곡선에서 피크를 찾는다.
+
+    반환: [(peak_time_sec, peak_index), ...] (peak_time_sec: 본편 기준 초)
+    """
+    if len(energy) == 0:
+        return []
+
+    # z-score 정규화
+    mean = np.mean(energy)
+    std = np.std(energy)
+    if std < 1e-6:
+        return []
+    z_score = (energy - mean) / std
+
+    # 제외 구간 마스크
+    exclude_start_idx = int(exclude_start / window_sec)
+    exclude_end_idx = int((duration - exclude_end) / window_sec)
+    mask = np.ones(len(energy), dtype=bool)
+    mask[:exclude_start_idx] = False
+    mask[exclude_end_idx:] = False
+    z_score[~mask] = -np.inf
+
+    # 피크 찾기 (min_gap 유지)
+    peaks = []
+    min_gap_idx = int(min_gap / window_sec)
+    while len(peaks) < n_peaks:
+        if np.all(z_score <= -np.inf):
+            break
+        idx = np.argmax(z_score)
+        if z_score[idx] <= -np.inf:
+            break
+        peaks.append(idx)
+        # 주변 제외
+        start = max(0, idx - min_gap_idx)
+        end = min(len(z_score), idx + min_gap_idx + 1)
+        z_score[start:end] = -np.inf
+
+    # 시간으로 변환 (제시하는 시간은 피크 자체)
+    result = [(idx * window_sec, idx) for idx in peaks]
+    result.sort(key=lambda x: x[0])  # 시간 순서대로
+    return result
+
+
+def _extract_teaser_clips(video: str, w: int, h: int, fps: str, tmpdir: str,
+                          n_clips: int = 3, clip_duration: float = 1.5) -> list:
+    """본편에서 "가장 뜨거운 순간" N개를 추출.
+
+    반환: [teaser_ts_file_1, teaser_ts_file_2, ...] (각 clip_duration초)
+    """
+    # 1) 오디오 추출
+    wav_path = os.path.join(tmpdir, "main_audio.wav")
+    extract_audio(video, wav_path)
+
+    # 2) 에너지 계산 (전체 에너지 + 목소리 에너지)
+    energy_arr, window_sec = compute_energy(wav_path)
+    voice_arr, _ = compute_voice_energy(wav_path, tmpdir)
+
+    # 에너지 합산 (voice 가중치 높임)
+    if len(voice_arr) > 0:
+        # 길이 맞추기
+        min_len = min(len(energy_arr), len(voice_arr))
+        combined = energy_arr[:min_len] + voice_arr[:min_len] * 2.0
+    else:
+        combined = energy_arr
+
+    # 영상 길이(초)
+    video_dur = get_video_duration(video)
+
+    # 3) 피크 찾기
+    peaks = _find_energy_peaks(combined, window_sec, video_dur, n_peaks=n_clips,
+                               min_gap=15.0, exclude_start=3.0, exclude_end=3.0)
+    if not peaks:
+        print(f"[티저] 가능한 피크를 찾을 수 없습니다.", flush=True)
+        return []
+
+    # 4) 각 피크에서 clip_duration 초짜리 클립 추출
+    teaser_files = []
+    for i, (peak_time, _) in enumerate(peaks, 1):
+        clip_start = max(0.0, peak_time - clip_duration / 2)
+        clip_end = min(video_dur, clip_start + clip_duration)
+        # 길이 보정
+        if clip_end - clip_start < clip_duration * 0.9:
+            clip_start = max(0.0, clip_end - clip_duration)
+
+        out_ts = os.path.join(tmpdir, f"teaser_cut_{i}.ts")
+        cmd = ["ffmpeg", "-y", "-i", os.path.abspath(video),
+               "-ss", f"{clip_start}", "-to", f"{clip_end}",
+               "-vf", f"scale={w}:{h},setsar=1,format=yuv420p"] + _enc_opts(fps) + [out_ts]
+        run_ffmpeg(cmd, label=f"(티저 컷 {i}/{len(peaks)})")
+        teaser_files.append(out_ts)
+
+        # 로그: 피크 시간 출력
+        print(f"[티저] 컷 {i}: 원본 {peak_time:.2f}초 (±{clip_duration/2:.2f}초)", flush=True)
+
+    return teaser_files
+
+
+def get_video_duration(video_path: str) -> float:
+    """ffprobe로 영상 길이를 초(float) 단위로 구한다."""
+    try:
+        out = run(["ffprobe", "-v", "quiet", "-print_format", "json",
+                   "-select_streams", "v:0", "-show_entries", "stream=duration",
+                   video_path])
+        data = json.loads(out)
+        if data.get("streams"):
+            dur = float(data["streams"][0].get("duration", 0))
+            return dur
+    except Exception:
+        pass
+    return 0.0
+
+
 def concat_ts(ts_files, out_mp4: str, tmpdir: str) -> None:
     """TS 조각들을 concat 디먹서로 이어붙여 mp4 로 담는다(재인코딩 X)."""
     list_path = os.path.join(tmpdir, "concat_list.txt")
@@ -518,7 +635,8 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
              wm_scale: float = 0.12, wm_margin: int = 24,
              wm_colorkey: str = "", auto_labels: bool = False,
              gemini_key: str = "", gemini_model: str = GEMINI_MODEL,
-             label_size: int = 44, loudnorm: bool = False) -> None:
+             label_size: int = 44, loudnorm: bool = False,
+             teaser_cuts: int = 0) -> None:
     video = os.path.abspath(video)
     out_path = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -544,7 +662,27 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
     with tempfile.TemporaryDirectory(prefix="finalize_") as tmp:
         ts_files = []
 
-        # 1) 인트로 영상 (있으면 맨 앞)
+        # 0) 인트로 티저 (선택) — 맨 맨 앞 (cold-open)
+        if teaser_cuts > 0:
+            print(f"[인트로 티저] 본편에서 {teaser_cuts}개 피크 선정 중...", flush=True)
+            teaser_files = _extract_teaser_clips(video, w, h, fps, tmp, n_clips=teaser_cuts)
+            if teaser_files:
+                # 티저 끝에 화이트 플래시 + 오디오 fade 효과 추가 (0.25초)
+                # 간단히: 마지막 커트에 fade-out 효과를 각각에 붙이고,
+                # 마지막 커트 끝에 0.25초 화이트 프레임 추가
+                last_idx = len(teaser_files) - 1
+                for i, ts in enumerate(teaser_files):
+                    if i == last_idx:
+                        # 마지막 컷: fade + white flash
+                        faded_ts = os.path.join(tmp, f"teaser_fade_{i}.ts")
+                        cmd = ["ffmpeg", "-y", "-i", ts,
+                               "-vf", "fade=t=out:st=1.25:d=0.25:color=white",
+                               "-af", "afade=t=out:st=1.25:d=0.25"] + _enc_opts(fps) + [faded_ts]
+                        run_ffmpeg(cmd, label=f"(티저 페이드 {i+1})")
+                        teaser_files[i] = faded_ts
+                ts_files.extend(teaser_files)
+
+        # 1) 인트로 영상 (있으면 티저 다음)
         if intro_video:
             print(f"[인트로 영상] 규격 맞추는 중...", flush=True)
             iv_ts = os.path.join(tmp, "intro_video.ts")
@@ -666,6 +804,8 @@ def main():
                     help="음량을 유튜브 표준(-14 LUFS)으로 정규화")
     ap.add_argument("--cpu-encode", action="store_true",
                     help="GPU 가속 인코딩 끄기 (호환성 문제 시)")
+    ap.add_argument("--teaser", type=int, default=0,
+                    help="인트로 티저: 본편에서 추출할 하이라이트 컷 수 (0=끔, 2~4 권장)")
     ap.set_defaults(intro=True, cover=True, burn=True)
     args = ap.parse_args()
 
@@ -711,7 +851,7 @@ def main():
              wm_colorkey=args.wm_colorkey,
              auto_labels=args.auto_labels, gemini_key=args.gemini_key,
              gemini_model=args.gemini_model, label_size=args.label_size,
-             loudnorm=args.loudnorm)
+             loudnorm=args.loudnorm, teaser_cuts=args.teaser)
 
 
 if __name__ == "__main__":
