@@ -9,7 +9,7 @@
 **A video tool that automatically analyzes long live-stream VODs (YouTube, Chzzk, SOOP, Twitch), extracts only the best moments (highlights),**
 **and layers on subtitles, transitions and background music to produce an upload-ready finished video.**
 
-Powered by faster-whisper speech recognition for rapid subtitles (3x faster than before) · **chat-reaction & voice-based highlight detection** · **GPU-accelerated encoding (auto-detected)** · **closeup transitions (auto-detect camera)** and ffmpeg · comes with a **graphical UI (GUI)** so you don't need to know Python · **modern dark theme with Windows 11 styling (sv-ttk)** · **automatic update notifications**
+Powered by faster-whisper speech recognition for rapid subtitles (3x faster than before) · **chat-reaction & voice-based highlight detection** · **GPU-accelerated encoding (auto-detected)** · **closeup transitions (auto-detect camera)** and ffmpeg · comes with a **graphical UI (GUI)** so you don't need to know Python · **modern dark theme with Windows 11 styling (sv-ttk)** · **automatic settings save** · **automatic update notifications**
 
 </div>
 
@@ -107,6 +107,8 @@ AI subtitles aren't perfect. Follow the order below to produce a **finished vide
 3. *(optional)* Open the **`.srt`** in a text editor, fix any wrong words, and save.
 4. **`Finalize` tab** → select the video you just made + subtitles + thumbnail → click **"Make final video."**
 5. The upload-ready **final mp4** is saved. Done! 🎉
+
+> **All settings are saved automatically and restored on the next run.** Target length, transitions, punch-in, chat options, paths, language, and 90+ other options—plus window size—are remembered, so you won't need to reconfigure them for repeat tasks.
 
 ---
 
