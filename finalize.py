@@ -513,7 +513,12 @@ def _extract_teaser_clips(video: str, w: int, h: int, fps: str, tmpdir: str,
     """본편에서 "가장 뜨거운 순간" N개를 추출.
 
     반환: [teaser_ts_file_1, teaser_ts_file_2, ...] (각 clip_duration초)
+
+    Args:
+        clip_duration: 각 티저 컷의 길이(초), 기본 1.5. 범위 0.5~5.0으로 클램프됨.
     """
+    # clip_duration을 0.5~5.0 범위로 클램프
+    clip_duration = max(0.5, min(5.0, clip_duration))
     # 1) 오디오 추출
     wav_path = os.path.join(tmpdir, "main_audio.wav")
     extract_audio(video, wav_path)
@@ -636,7 +641,7 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
              wm_colorkey: str = "", auto_labels: bool = False,
              gemini_key: str = "", gemini_model: str = GEMINI_MODEL,
              label_size: int = 44, loudnorm: bool = False,
-             teaser_cuts: int = 0) -> None:
+             teaser_cuts: int = 0, teaser_sec: float = 1.5) -> None:
     video = os.path.abspath(video)
     out_path = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -664,8 +669,9 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
 
         # 0) 인트로 티저 (선택) — 맨 맨 앞 (cold-open)
         if teaser_cuts > 0:
-            print(f"[인트로 티저] 본편에서 {teaser_cuts}개 피크 선정 중...", flush=True)
-            teaser_files = _extract_teaser_clips(video, w, h, fps, tmp, n_clips=teaser_cuts)
+            print(f"[인트로 티저] 본편에서 {teaser_cuts}개 피크 선정 중 (각 {teaser_sec}초)...", flush=True)
+            teaser_files = _extract_teaser_clips(video, w, h, fps, tmp, n_clips=teaser_cuts,
+                                               clip_duration=teaser_sec)
             if teaser_files:
                 # 티저 끝에 화이트 플래시 + 오디오 fade 효과 추가 (0.25초)
                 # 간단히: 마지막 커트에 fade-out 효과를 각각에 붙이고,
@@ -674,10 +680,12 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
                 for i, ts in enumerate(teaser_files):
                     if i == last_idx:
                         # 마지막 컷: fade + white flash
+                        # st는 페이드 시작 시간 = (컷 길이 - 0.25초)
+                        fade_start = teaser_sec - 0.25
                         faded_ts = os.path.join(tmp, f"teaser_fade_{i}.ts")
                         cmd = ["ffmpeg", "-y", "-i", ts,
-                               "-vf", "fade=t=out:st=1.25:d=0.25:color=white",
-                               "-af", "afade=t=out:st=1.25:d=0.25"] + _enc_opts(fps) + [faded_ts]
+                               "-vf", f"fade=t=out:st={fade_start}:d=0.25:color=white",
+                               "-af", f"afade=t=out:st={fade_start}:d=0.25"] + _enc_opts(fps) + [faded_ts]
                         run_ffmpeg(cmd, label=f"(티저 페이드 {i+1})")
                         teaser_files[i] = faded_ts
                 ts_files.extend(teaser_files)
@@ -806,6 +814,8 @@ def main():
                     help="GPU 가속 인코딩 끄기 (호환성 문제 시)")
     ap.add_argument("--teaser", type=int, default=0,
                     help="인트로 티저: 본편에서 추출할 하이라이트 컷 수 (0=끔, 2~4 권장)")
+    ap.add_argument("--teaser-sec", type=float, default=1.5,
+                    help="티저 컷 하나의 길이(초) (기본 1.5, 범위 0.5~5.0)")
     ap.set_defaults(intro=True, cover=True, burn=True)
     args = ap.parse_args()
 
@@ -851,7 +861,8 @@ def main():
              wm_colorkey=args.wm_colorkey,
              auto_labels=args.auto_labels, gemini_key=args.gemini_key,
              gemini_model=args.gemini_model, label_size=args.label_size,
-             loudnorm=args.loudnorm, teaser_cuts=args.teaser)
+             loudnorm=args.loudnorm, teaser_cuts=args.teaser,
+             teaser_sec=args.teaser_sec)
 
 
 if __name__ == "__main__":

@@ -308,6 +308,7 @@ Combine the summary video + (edited) subtitles + thumbnail image into an upload-
 | GPU-accelerated encoding | Auto-detects and uses graphics card (NVIDIA/Intel/AMD) for fast hardware encoding (uncheck if issues) | on |
 | Auto intro teaser | Auto-generate a preview from the hottest moments of the main video on/off |
 | Teaser clip count | Number of clips in the preview (each 1.5 seconds; default `3`) |
+| Teaser cut length (s) | Length of each teaser cut (0.5–5 s) | `1.5` s |
 | Add intro | Use the thumbnail as the opening scene on/off |
 | Insert cover | Embed the thumbnail as album-art-style cover in the mp4 on/off |
 | Burn subtitles | Bake subtitles into the video (hardsub) on/off |

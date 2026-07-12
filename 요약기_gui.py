@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-APP_VERSION = "2.7.0"
+APP_VERSION = "2.8.0"
 
 # ── sv-ttk availability check ─────────────────────────────────────────────────────
 try:
@@ -303,6 +303,7 @@ STRINGS = {
         "teaser": "인트로 티저 자동 (하이라이트 예고편)",
         "teaser_cuts_label": "티저 컷 수",
         "teaser_cuts": ["2개", "3개", "4개"],
+        "teaser_sec": "티저 컷 길이(초)",
         "btn_finalize": "완성 영상 만들기",
         # file dialog titles
         "dlg_outdir": "출력 폴더 선택",
@@ -488,6 +489,7 @@ STRINGS = {
         "teaser": "Auto intro teaser (highlight preview)",
         "teaser_cuts_label": "Teaser cuts",
         "teaser_cuts": ["2 cuts", "3 cuts", "4 cuts"],
+        "teaser_sec": "Teaser cut length (s)",
         "btn_finalize": "Make Final Video",
         # file dialog titles
         "dlg_outdir": "Select output folder",
@@ -1608,11 +1610,18 @@ def build_finalize_tab(nb):
     reg_setting("fin.teaser_cuts", "combo", teaser_cuts_combo)
     teaser_cuts_combo.grid(row=9, column=3, sticky="w", pady=(6, 0))
 
-    _label(opt, "gemini_key", row=10, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
+    # 티저 컷 길이(초)
+    _label(opt, "teaser_sec", row=10, column=0, sticky="w", padx=(8, 4), pady=(4, 0))
+    teaser_sec_var = tk.StringVar(value="1.5")
+    teaser_sec_entry = ttk.Entry(opt, textvariable=teaser_sec_var, width=6)
+    reg_setting("fin.teaser_sec", "var", teaser_sec_var)
+    teaser_sec_entry.grid(row=10, column=1, sticky="w", padx=(8, 4), pady=(4, 0))
+
+    _label(opt, "gemini_key", row=11, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
     gemini_key_var = tk.StringVar(value=load_gemini_key())
     ttk.Entry(opt, textvariable=gemini_key_var, width=28, show="•").grid(
-        row=10, column=1, columnspan=2, sticky="ew", pady=(0, 3))
-    _label(opt, "gemini_key_hint", row=10, column=3, sticky="w", padx=(8, 4), pady=(0, 3))
+        row=11, column=1, columnspan=2, sticky="ew", pady=(0, 3))
+    _label(opt, "gemini_key_hint", row=11, column=3, sticky="w", padx=(8, 4), pady=(0, 3))
 
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_finalize"))
@@ -1683,6 +1692,13 @@ def build_finalize_tab(nb):
             cuts_idx = max(teaser_cuts_combo.current(), 0)
             cuts_values = [2, 3, 4]  # "2개", "3개", "4개"
             cmd += ["--teaser", str(cuts_values[cuts_idx])]
+            # 티저 컷 길이(초)
+            try:
+                teaser_sec_val = float(teaser_sec_var.get().strip() or "1.5")
+                teaser_sec_val = max(0.5, min(5.0, teaser_sec_val))  # 0.5~5.0 범위로 클램프
+            except ValueError:
+                teaser_sec_val = 1.5
+            cmd += ["--teaser-sec", f"{teaser_sec_val}"]
 
         # AI 자동 키워드 (Gemini)
         gkey = gemini_key_var.get().strip()
