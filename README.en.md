@@ -312,6 +312,12 @@ Combine the summary video + (edited) subtitles + thumbnail image into an upload-
 | Add intro | Use the thumbnail as the opening scene on/off |
 | Insert cover | Embed the thumbnail as album-art-style cover in the mp4 on/off |
 | Burn subtitles | Bake subtitles into the video (hardsub) on/off |
+| Impact captions (emphasize shouting moments) | Emphasize subtitles on loud audio peaks with large text centered on screen on/off |
+| Impact caption frequency | Frequency of impact caption display (Few / Some / Many) |
+| Impact caption size | Impact caption font size (default `64`) |
+| Impact caption color | Impact caption color (Yellow / White / Red / Cyan) |
+| Impact caption position | Impact caption position (Center / Upper / Lower) |
+| Impact caption pop effect | Impact caption pop animation on/off |
 | Normalize loudness | Match audio to the YouTube standard (-14 LUFS) on/off |
 
 **Button: click "Make final video"** → everything is merged automatically and the final mp4 is saved.
