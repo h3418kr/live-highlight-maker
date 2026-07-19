@@ -344,46 +344,51 @@
     }
     .how-it-works h2 {
       text-align: center;
-      margin-bottom: 3rem;
-    }
-    .steps {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 2rem;
-      margin-bottom: 3rem;
-    }
-    .step {
-      background: #0e1116;
-      padding: 2rem;
-      border-radius: 12px;
-      border: 1px solid #30363d;
-      text-align: center;
-    }
-    .step-icon {
-      width: 60px;
-      height: 60px;
-      margin: 0 auto 1.5rem;
-    }
-    .step h3 {
       margin-bottom: 1rem;
     }
-    .step p {
-      color: #8b949e;
-      font-size: 0.95rem;
-    }
-    .metrics-bar {
-      background: #0e1116;
-      padding: 2rem;
-      border-radius: 12px;
-      border: 1px solid #30363d;
-      margin-top: 2rem;
+    .workflow-subtitle {
       text-align: center;
+      color: #8b949e;
+      font-size: 1rem;
+      margin-bottom: 2rem;
     }
-    .metrics-title {
-      color: #79d8f1;
+    .workflow-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      max-width: 1100px;
+      margin: 0 auto 2rem;
+      position: relative;
+    }
+    .workflow-image {
+      width: 100%;
+      max-width: 1100px;
+      height: auto;
+      border-radius: 18px;
+      box-shadow: 0 12px 32px rgba(88, 196, 220, 0.15), 0 20px 60px rgba(0, 0, 0, 0.4);
+      display: block;
+    }
+    .workflow-scroll-hint {
+      display: none;
+      text-align: center;
+      font-size: 0.85rem;
+      color: #8b949e;
+      margin-top: 1rem;
+    }
+    .workflow-stats {
+      text-align: center;
+      font-size: 1rem;
+      color: #c9d1d9;
+      max-width: 1100px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+    .workflow-stats .highlight {
+      color: #58c4dc;
       font-weight: 600;
-      margin-bottom: 1.5rem;
     }
+
+    /* Removed: .steps, .step, .step-icon, .metrics-bar, .metrics-title (replaced with workflow.svg) */
 
     /* Moments Section */
     .moments {
@@ -714,6 +719,25 @@
         max-width: 100%;
       }
     }
+
+    @media (max-width: 700px) {
+      .workflow-wrapper {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        max-width: calc(100vw - 40px);
+        margin: 0 auto 2rem;
+        scroll-behavior: smooth;
+        align-items: flex-start;
+      }
+      .workflow-image {
+        min-width: 900px;
+        max-width: none;
+        width: auto;
+      }
+      .workflow-scroll-hint {
+        display: block;
+      }
+    }
   </style>
 </head>
 <body>
@@ -768,87 +792,14 @@
 <section class="how-it-works">
   <div class="container">
     <h2 class="section-steps">3단계로 완성</h2>
-    <div class="steps">
-      <div class="step">
-        <svg class="step-icon" width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="30" cy="30" r="28" fill="none" stroke="#58c4dc" stroke-width="2"/>
-          <text x="30" y="36" font-family="Arial" font-size="24" font-weight="bold" fill="#58c4dc" text-anchor="middle">1</text>
-        </svg>
-        <h3>링크 붙여넣기</h3>
-        <p>유튜브, 치지직, SOOP, 트위치 다시보기 URL을 입력</p>
-      </div>
-      <div class="step">
-        <svg class="step-icon" width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="30" cy="30" r="28" fill="none" stroke="#58c4dc" stroke-width="2"/>
-          <text x="30" y="36" font-family="Arial" font-size="24" font-weight="bold" fill="#58c4dc" text-anchor="middle">2</text>
-        </svg>
-        <h3>길이 정하기</h3>
-        <p>원하는 하이라이트 영상 길이를 분 단위로 지정</p>
-      </div>
-      <div class="step">
-        <svg class="step-icon" width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="30" cy="30" r="28" fill="none" stroke="#58c4dc" stroke-width="2"/>
-          <text x="30" y="36" font-family="Arial" font-size="24" font-weight="bold" fill="#58c4dc" text-anchor="middle">3</text>
-        </svg>
-        <h3>실행</h3>
-        <p>프로그램이 자동으로 하이라이트를 추출해 저장</p>
-      </div>
+    <p class="workflow-subtitle">URL 하나로 시작해 업로드용 완성 영상까지</p>
+
+    <div class="workflow-wrapper">
+      <img src="img/workflow.svg" alt="추천 워크플로우: STEP 1 영상 요약 → STEP 2 자막 다듬기 → STEP 3 완성 영상" width="1180" height="360" loading="lazy" class="workflow-image">
+      <p class="workflow-scroll-hint">← 옆으로 넘겨보세요 →</p>
     </div>
 
-    <div class="metrics-bar">
-      <div class="metrics-title">🎬 실측 사례</div>
-      <svg viewBox="0 0 600 140" xmlns="http://www.w3.org/2000/svg" style="width: 100%; max-width: 600px;">
-        <defs>
-          <filter id="timelineGlow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
-            <feMerge>
-              <feMergeNode in="coloredBlur"/>
-              <feMergeNode in="SourceGraphic"/>
-            </feMerge>
-          </filter>
-          <linearGradient id="highlightGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#58c4dc;stop-opacity:0.95"/>
-            <stop offset="100%" style="stop-color:#79d8f1;stop-opacity:0.85"/>
-          </linearGradient>
-        </defs>
-
-        <!-- Long timeline track (2시간 54분) - top row -->
-        <rect x="40" y="20" width="520" height="24" rx="12" fill="#30363d" stroke="#3d444d" stroke-width="1"/>
-
-        <!-- Highlight segments - distributed across full width -->
-        <rect x="60" y="20" width="45" height="24" rx="10" fill="url(#highlightGrad)" opacity="0.9" filter="url(#timelineGlow)"/>
-        <rect x="130" y="20" width="52" height="24" rx="10" fill="url(#highlightGrad)" opacity="0.85" filter="url(#timelineGlow)"/>
-        <rect x="230" y="20" width="48" height="24" rx="10" fill="url(#highlightGrad)" opacity="0.8" filter="url(#timelineGlow)"/>
-        <rect x="325" y="20" width="56" height="24" rx="10" fill="url(#highlightGrad)" opacity="0.9" filter="url(#timelineGlow)"/>
-        <rect x="430" y="20" width="45" height="24" rx="10" fill="url(#highlightGrad)" opacity="0.85" filter="url(#timelineGlow)"/>
-
-        <!-- Tick marks on main track -->
-        <line x1="100" y1="16" x2="100" y2="10" stroke="#58c4dc" stroke-width="1" opacity="0.5"/>
-        <line x1="220" y1="16" x2="220" y2="10" stroke="#58c4dc" stroke-width="1" opacity="0.5"/>
-        <line x1="380" y1="16" x2="380" y2="10" stroke="#58c4dc" stroke-width="1" opacity="0.5"/>
-        <line x1="540" y1="16" x2="540" y2="10" stroke="#58c4dc" stroke-width="1" opacity="0.5"/>
-
-        <!-- Connecting curved lines from highlights to output (symmetrical) -->
-        <path d="M 102 44 Q 160 70 220 90" stroke="#58c4dc" stroke-width="2" fill="none" opacity="0.6" stroke-dasharray="4,3" filter="url(#timelineGlow)"/>
-        <path d="M 477 44 Q 420 70 380 90" stroke="#58c4dc" stroke-width="2" fill="none" opacity="0.6" stroke-dasharray="4,3" filter="url(#timelineGlow)"/>
-
-        <!-- Connection endpoints (circles) -->
-        <circle cx="102" cy="44" r="3.5" fill="#ffd400" opacity="0.8" filter="url(#timelineGlow)"/>
-        <circle cx="477" cy="44" r="3.5" fill="#ffd400" opacity="0.8" filter="url(#timelineGlow)"/>
-        <circle cx="220" cy="90" r="3" fill="#58c4dc" opacity="0.7" filter="url(#timelineGlow)"/>
-        <circle cx="380" cy="90" r="3" fill="#58c4dc" opacity="0.7" filter="url(#timelineGlow)"/>
-
-        <!-- Short output track (10분) - bottom row, centered -->
-        <rect x="240" y="100" width="120" height="20" rx="10" fill="#58c4dc" opacity="0.9" filter="url(#timelineGlow)"/>
-
-        <!-- Play icon -->
-        <polygon points="300,107 300,113 310,110" fill="#0e1116" opacity="0.9"/>
-
-        <!-- Duration labels -->
-        <text x="40" y="138" font-family="Arial, sans-serif" font-size="12" font-weight="600" fill="#8b949e">2시간 54분</text>
-        <text x="420" y="138" font-family="Arial, sans-serif" font-size="12" font-weight="600" fill="#8b949e">10분 0.5초</text>
-      </svg>
-    </div>
+    <p class="workflow-stats">실측: <span class="highlight">2시간 54분</span> 방송 → <span class="highlight">10분 0.5초</span> 요약 · 자막 <span class="highlight">89줄</span> 자동 생성</p>
   </div>
 </section>
 
