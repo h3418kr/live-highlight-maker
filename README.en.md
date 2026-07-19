@@ -111,6 +111,16 @@ AI subtitles aren't perfect. Follow the order below to produce a **finished vide
 
 > **All settings are saved automatically and restored on the next run.** Target length, transitions, punch-in, chat options, paths, language, and 90+ other options—plus window size—are remembered, so you won't need to reconfigure them for repeat tasks.
 
+### 📌 Header options (common to all tabs)
+
+At the top of the program window, you'll find the following button and checkboxes to control two features:
+
+| Option | Description |
+|------|------|
+| **Glossary** button | Edit `용어집.txt` in the program folder to add game/stream-specific terms (one per line), and they are automatically used as hints during speech recognition (subtitle generation). (Example: entering game terms like League of Legends, Valorant, Overwatch improves subtitle accuracy) If the file doesn't exist, a default Diablo 2 template is auto-created. Leave it empty to disable hints. |
+| **Completion sound** | Play a notification sound when a video task finishes (different sounds for success/failure) — on by default |
+| **Open folder on done** | Automatically open the output folder when a task completes — on by default |
+
 ---
 
 ## 📋 Detailed guide (on-screen)
