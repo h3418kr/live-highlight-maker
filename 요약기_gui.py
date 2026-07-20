@@ -47,6 +47,7 @@ PUNCHIN_CODES = ["none", "low", "mid", "high"]  # 펀치인 레벨: 끔, 적게,
 
 # Gemini API 키를 저장/불러오기 (한 번 입력하면 다음에도 자동 채움)
 GEMINI_KEY_FILE = os.path.join(SCRIPT_DIR, "gemini_key.txt")
+OPENAI_KEY_FILE = os.path.join(SCRIPT_DIR, "openai_key.txt")
 SETTINGS_FILE = os.path.join(SCRIPT_DIR, "settings.json")
 
 
@@ -61,6 +62,22 @@ def load_gemini_key():
 def save_gemini_key(key):
     try:
         with open(GEMINI_KEY_FILE, "w", encoding="utf-8") as f:
+            f.write((key or "").strip())
+    except Exception:
+        pass
+
+
+def load_openai_key():
+    try:
+        with open(OPENAI_KEY_FILE, encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def save_openai_key(key):
+    try:
+        with open(OPENAI_KEY_FILE, "w", encoding="utf-8") as f:
             f.write((key or "").strip())
     except Exception:
         pass
@@ -296,6 +313,11 @@ STRINGS = {
         "auto_labels_hint": "(자막을 AI로 분석해 구간별 키워드를 마크 아래 표시)",
         "gemini_key": "Gemini API 키",
         "gemini_key_hint": "(aistudio.google.com 에서 무료 발급 · 저장됨)",
+        "ai_fix_subs": "AI 자막 교정",
+        "ai_fix_provider": "교정 제공자",
+        "ai_fix_provider_values": ["자동 (Gemini 우선)", "Gemini만", "ChatGPT만"],
+        "openai_key": "ChatGPT API 키",
+        "openai_key_hint": "(기본: Gemini 무료 우선, 한도 초과 시 ChatGPT 자동 전환 · 영상당 1원 미만)",
         "label_position": "소제목 위치",
         "label_position_hint": "(‘시작-끝 | 소제목’으로 입력한 소제목이 뜨는 자리)",
         "analyze_only": "구간 후보만 분석 (영상은 만들지 않음 — 빠름)",
@@ -399,6 +421,11 @@ STRINGS = {
         "impact_pos_values": ["중앙", "중앙 위", "하단 위"],
         "impact_pop": "팝 효과",
         "btn_finalize": "완성 영상 만들기",
+        "ai_fix_subs": "AI 자막 교정",
+        "ai_fix_provider": "교정 제공자",
+        "ai_fix_provider_values": ["자동 (Gemini 우선)", "Gemini만", "ChatGPT만"],
+        "openai_key": "ChatGPT API 키",
+        "openai_key_hint": "(기본: Gemini 무료 우선, 한도 초과 시 ChatGPT 자동 전환 · 영상당 1원 미만)",
         # file dialog titles
         "dlg_outdir": "출력 폴더 선택",
         "dlg_video": "영상 파일 선택",
@@ -494,6 +521,11 @@ STRINGS = {
         "auto_labels_hint": "(AI reads the subtitles and shows a keyword per section under the mark)",
         "gemini_key": "Gemini API key",
         "gemini_key_hint": "(free key from aistudio.google.com · saved)",
+        "ai_fix_subs": "AI Subtitle Fix",
+        "ai_fix_provider": "Fix Provider",
+        "ai_fix_provider_values": ["Auto (Gemini first)", "Gemini only", "ChatGPT only"],
+        "openai_key": "ChatGPT API Key",
+        "openai_key_hint": "(Default: Gemini free first, auto-switch to ChatGPT on quota exceed · <$0.001 per video)",
         "label_position": "Subtitle position",
         "label_position_hint": "(where the 'start-end | subtitle' text appears)",
         "analyze_only": "Analyze candidates only (no video output — fast)",
@@ -598,6 +630,11 @@ STRINGS = {
         "impact_pos_values": ["Center", "Upper", "Lower"],
         "impact_pop": "Pop effect",
         "btn_finalize": "Make Final Video",
+        "ai_fix_subs": "AI Subtitle Fix",
+        "ai_fix_provider": "Fix Provider",
+        "ai_fix_provider_values": ["Auto (Gemini first)", "Gemini only", "ChatGPT only"],
+        "openai_key": "ChatGPT API Key",
+        "openai_key_hint": "(Default: Gemini free first, auto-switch to ChatGPT on quota exceed · <$0.001 per video)",
         # file dialog titles
         "dlg_outdir": "Select output folder",
         "dlg_video": "Select video file",
@@ -1792,6 +1829,27 @@ def build_finalize_tab(nb):
         row=14, column=1, columnspan=2, sticky="ew", pady=(0, 3))
     _label(opt, "gemini_key_hint", row=14, column=3, sticky="w", padx=(8, 4), pady=(0, 3))
 
+    # AI 자막 교정 (row 15, 16)
+    ai_fix_var = tk.BooleanVar(value=False)
+    reg_setting("fin.ai_fix", "var", ai_fix_var)
+    chk_ai_fix = ttk.Checkbutton(opt, text=_t("ai_fix_subs"), variable=ai_fix_var)
+    reg("text", chk_ai_fix, "ai_fix_subs")
+    chk_ai_fix.grid(row=15, column=0, sticky="w", padx=8, pady=(6, 0))
+
+    _label(opt, "ai_fix_provider", row=15, column=2, sticky="w", padx=(16, 4), pady=(6, 0))
+    ai_fix_provider_combo = ttk.Combobox(opt, values=_t("ai_fix_provider_values"), width=16, state="readonly")
+    ai_fix_provider_combo.current(0)  # 자동 (Gemini 우선) 기본값
+    reg("combo", (ai_fix_provider_combo, "ai_fix_provider_values"), "ai_fix_provider_values")
+    reg_setting("fin.ai_fix_provider", "combo", ai_fix_provider_combo)
+    ai_fix_provider_combo.grid(row=15, column=3, sticky="w", pady=(6, 0))
+
+    # ChatGPT API 키 (row 16)
+    _label(opt, "openai_key", row=16, column=0, sticky="w", padx=(8, 4), pady=(0, 3))
+    openai_key_var = tk.StringVar(value=load_openai_key())
+    ttk.Entry(opt, textvariable=openai_key_var, width=28, show="•").grid(
+        row=16, column=1, columnspan=2, sticky="ew", pady=(0, 3))
+    _label(opt, "openai_key_hint", row=16, column=3, sticky="w", padx=(8, 4), pady=(0, 3))
+
     # 실행 버튼
     btn_label_var = tk.StringVar(value=_t("btn_finalize"))
     reg("var", btn_label_var, "btn_finalize")
@@ -1906,6 +1964,38 @@ def build_finalize_tab(nb):
             # 라벨 위치(마크 아래)를 위해 위치를 항상 전달 (마크가 없어도)
             if "--wm-pos" not in cmd:
                 cmd += ["--wm-pos", wm_pos]
+
+        # AI 자막 교정
+        if ai_fix_var.get():
+            provider_idx = max(ai_fix_provider_combo.current(), 0)
+            providers = ["auto", "gemini", "openai"]  # 콤보 값에 매핑
+            provider = providers[provider_idx]
+            cmd += ["--ai-fix", provider]
+
+            if provider == "auto":
+                # auto 모드: Gemini와 OpenAI 키를 둘 다 전달 (있는 것만)
+                if gkey:
+                    cmd += ["--gemini-key", gkey]
+                okey = openai_key_var.get().strip()
+                if okey:
+                    save_openai_key(okey)
+                    cmd += ["--openai-key", okey]
+            elif provider == "openai":
+                okey = openai_key_var.get().strip()
+                if not okey:
+                    messagebox.showwarning(_t("msg_input_error"), _t("openai_key"))
+                    return
+                if not srt:
+                    messagebox.showwarning(_t("msg_input_error"), _t("msg_need_srt"))
+                    return
+                save_openai_key(okey)
+                cmd += ["--openai-key", okey]
+            else:  # gemini
+                if not gkey:
+                    messagebox.showwarning(_t("msg_input_error"), _t("gemini_key"))
+                    return
+                if "--gemini-key" not in cmd:
+                    cmd += ["--gemini-key", gkey]
 
         log.config(state="normal")
         log.delete("1.0", tk.END)

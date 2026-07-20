@@ -219,6 +219,10 @@ GEMINI_MODEL = "gemini-2.5-flash"
 # 모델이 404(지원종료)/429(할당량)면 자동으로 아래 모델로 대체 시도한다.
 GEMINI_FALLBACK = "gemini-flash-latest"
 
+# OpenAI 모델 (AI 자막 교정용)
+OPENAI_MODEL = "gpt-5-nano"
+OPENAI_FALLBACK = "gpt-4o-mini"
+
 
 def _media_wh(path: str):
     out = run(["ffprobe", "-v", "quiet", "-print_format", "json",
@@ -376,6 +380,353 @@ def gemini_labels(srt_path: str, api_key: str, model: str = GEMINI_MODEL):
         last_err = "응답에서 키워드 파싱 실패: " + " / ".join(text.splitlines())[:150]
     print(f"  (Gemini 키워드 생성 실패: {last_err})", flush=True)
     return []
+
+
+def _extract_json_obj(text: str) -> dict:
+    """AI 응답에서 JSON 오브젝트를 최대한 관대하게 추출한다.
+
+    마크다운 펜스(```json ... ```)나 앞뒤 설명 문장이 붙어 와도 첫 {...} 블록을 찾아 파싱.
+    """
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+        t = re.sub(r"\s*```\s*$", "", t)
+    try:
+        return json.loads(t)
+    except Exception:
+        m = re.search(r"\{.*\}", t, re.DOTALL)
+        if m:
+            return json.loads(m.group(0))
+        raise
+
+
+def _fixes_items(fix_data):
+    """AI 응답에서 (줄번호, 교정문) 목록을 관대하게 추출한다.
+
+    표준 형식 {"fixes": [{"i": n, "t": "..."}]} 외에 구형 {"fixes": {"n": "..."}}나
+    리스트 최상위, i/index/line·t/text/fixed 키 변형도 수용.
+    """
+    fixes = fix_data.get("fixes", fix_data) if isinstance(fix_data, dict) else fix_data
+    out = []
+    if isinstance(fixes, dict):
+        for k, v in fixes.items():
+            try:
+                out.append((int(k), str(v)))
+            except (ValueError, TypeError):
+                pass
+    elif isinstance(fixes, list):
+        for it in fixes:
+            if not isinstance(it, dict):
+                continue
+            i = it.get("i", it.get("index", it.get("line")))
+            t = it.get("t", it.get("text", it.get("fixed")))
+            if i is None or not isinstance(t, str):
+                continue
+            try:
+                out.append((int(i), t))
+            except (ValueError, TypeError):
+                pass
+    return out
+
+
+def ai_fix_srt(srt_path: str, provider: str, gemini_key: str = "", openai_key: str = "", model: str = None) -> int:
+    """한국어 SRT 자막을 AI로 교정(오타·고유명사 오류·띄어쓰기).
+
+    provider: "gemini", "openai", "auto" (Gemini 우선, 한도초과 시 OpenAI 폴백)
+    반환: 수정된 줄 수 (int). 모든 예외는 로그만 출력하고 0 반환.
+    """
+    if not os.path.isfile(srt_path):
+        print(f"  [AI 교정] 건너뜀: SRT 파일을 찾을 수 없습니다.", flush=True)
+        return 0
+
+    try:
+        with open(srt_path, "r", encoding="utf-8") as f:
+            original_text = f.read()
+    except Exception as e:
+        print(f"  [AI 교정] 건너뜀: {e}", flush=True)
+        return 0
+
+    # SRT 파싱: (idx, start_sec, end_sec, text) 형태로 저장
+    cues = []
+    pattern = re.compile(
+        r'(\d+)\s*\n'
+        r'(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*'
+        r'(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*\n'
+        r'(.*?)(?=\n\s*\n|\Z)',
+        re.DOTALL
+    )
+
+    for m in pattern.finditer(original_text):
+        try:
+            idx = int(m.group(1))
+            h1, m1, s1, ms1 = int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5))
+            h2, m2, s2, ms2 = int(m.group(6)), int(m.group(7)), int(m.group(8)), int(m.group(9))
+            start = h1 * 3600 + m1 * 60 + s1 + ms1 / 1000.0
+            end = h2 * 3600 + m2 * 60 + s2 + ms2 / 1000.0
+            text = m.group(10).strip()
+            if end > start:
+                cues.append((idx, start, end, text))
+        except Exception:
+            pass
+
+    if not cues:
+        print(f"  [AI 교정] 건너뜀: 유효한 자막 줄이 없습니다.", flush=True)
+        return 0
+
+    # 용어집 로드
+    glossary_terms = []
+    glossary_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "용어집.txt")
+    if os.path.isfile(glossary_path):
+        try:
+            with open(glossary_path, encoding="utf-8", errors="replace") as f:
+                glossary_terms = [ln.strip() for ln in f.readlines()
+                                 if ln.strip() and not ln.strip().startswith("#")]
+        except Exception:
+            pass
+
+    # 텍스트만 추출 + 최대 60줄씩 청크로 분할
+    texts = [t for _, _, _, t in cues]
+    chunk_size = 60
+    chunks = [texts[i:i+chunk_size] for i in range(0, len(texts), chunk_size)]
+
+    # 시스템 프롬프트
+    system_prompt = (
+        "다음은 한국어 게임 방송 자막입니다. "
+        "음성 인식 오류(오타, 잘못 들은 고유명사, 띄어쓰기)만 교정하세요. "
+        "말투·의미·문장 구조는 바꾸지 마세요. 확실하지 않으면 그대로 두세요."
+    )
+    if glossary_terms:
+        system_prompt += f"\n다음 용어를 우선 사용: {', '.join(glossary_terms[:20])}"
+
+    system_prompt += (
+        "\n각 줄은 \"번호: 내용\" 형식으로 주어집니다. "
+        "**출력은 수정이 필요한 줄만** JSON {\"fixes\": [{\"i\": 번호, \"t\": \"교정문\"}, ...]} 로 반환하세요. "
+        "번호는 주어진 번호를 그대로 사용하고, 수정이 없으면 {\"fixes\": []}. 출력 토큰 최소화가 목적입니다."
+    )
+
+    total_fixed = 0
+
+    # auto 모드에서 Gemini 실패 후 OpenAI 사용 여부
+    use_fallback = False
+
+    # 각 청크에 대해 AI 호출
+    for chunk_idx, chunk_texts in enumerate(chunks, 1):
+        chunk_text = "\n".join(f"{i}: {t}" for i, t in enumerate(chunk_texts))
+
+        # 프롬프트
+        user_prompt = f"자막 줄:\n{chunk_text}"
+
+        # auto 모드에서 Gemini 실패 후 폴백 결정
+        active_provider = provider
+        if provider == "auto":
+            if use_fallback:
+                active_provider = "openai"
+            else:
+                active_provider = "gemini"
+
+        # provider별 API 호출
+        try:
+            if active_provider == "gemini":
+                if not gemini_key:
+                    if provider == "auto" and openai_key:
+                        print(f"  [AI 교정] Gemini 키 없음, ChatGPT로 전환합니다", flush=True)
+                        use_fallback = True
+                        active_provider = "openai"
+                    else:
+                        print(f"  [AI 교정] 건너뜀: Gemini API 키가 없습니다.", flush=True)
+                        break
+
+                if active_provider == "gemini":
+                    model = model or "gemini-2.5-flash"
+                    candidates = [model] + (["gemini-flash-latest"] if model != "gemini-flash-latest" else [])
+
+                    payload = {
+                        "contents": [{"parts": [{"text": system_prompt + "\n\n" + user_prompt}]}],
+                        "generationConfig": {
+                            "responseMimeType": "application/json",
+                            "responseSchema": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "fixes": {
+                                        "type": "ARRAY",
+                                        "items": {
+                                            "type": "OBJECT",
+                                            "properties": {
+                                                "i": {"type": "INTEGER"},
+                                                "t": {"type": "STRING"},
+                                            },
+                                            "required": ["i", "t"],
+                                        },
+                                    },
+                                },
+                                "required": ["fixes"],
+                            },
+                        },
+                        "safetySettings": [
+                            {"category": c, "threshold": "BLOCK_NONE"} for c in (
+                                "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
+                                "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT")
+                        ],
+                    }
+                    body = json.dumps(payload).encode("utf-8")
+
+                    response_text = None
+                    gemini_failed_429 = False
+                    for mdl in candidates:
+                        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+                               f"{mdl}:generateContent?key={gemini_key}")
+                        req = urllib.request.Request(
+                            url, data=body, headers={"Content-Type": "application/json"})
+                        try:
+                            with urllib.request.urlopen(req, timeout=90) as resp:
+                                raw = resp.read().decode("utf-8")
+                            data = json.loads(raw)
+                            response_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                            break
+                        except urllib.error.HTTPError as e:
+                            if e.code == 429:
+                                gemini_failed_429 = True
+                            if e.code in (404, 429):
+                                continue
+                            raise
+
+                    # auto 모드: Gemini 429 시 OpenAI로 폴백
+                    if gemini_failed_429 and provider == "auto" and openai_key:
+                        print(f"  [AI 교정] Gemini 무료 한도 초과 → ChatGPT(gpt-5-nano)로 전환합니다", flush=True)
+                        use_fallback = True
+                        active_provider = "openai"
+                        response_text = None
+
+                    if response_text and active_provider == "gemini":
+                        # JSON 파싱 (마크다운 펜스·군더더기 방어) + 형식 정규화
+                        items = _fixes_items(_extract_json_obj(response_text))
+
+                        # 수정 적용 (줄번호는 청크 내 상대 인덱스, 0부터 시작)
+                        chunk_offset = chunk_idx * chunk_size - chunk_size
+                        applied = 0
+                        for line_idx, fixed_text in items:
+                            if 0 <= line_idx < len(chunk_texts):
+                                abs_idx = chunk_offset + line_idx
+                                if abs_idx < len(cues):
+                                    idx, start, end, _ = cues[abs_idx]
+                                    cues[abs_idx] = (idx, start, end, fixed_text)
+                                    total_fixed += 1
+                                    applied += 1
+
+                        print(f"  [AI 교정] 청크 {chunk_idx}/{len(chunks)}: 수정 {applied}줄",
+                              flush=True)
+                    elif active_provider == "gemini":
+                        print(f"  [AI 교정] 청크 {chunk_idx}/{len(chunks)}: 응답 없음", flush=True)
+
+            # Gemini 폴백 또는 openai 제공자
+            if active_provider == "openai":
+                if not openai_key:
+                    if provider == "auto":
+                        print(f"  [AI 교정] Gemini 한도 초과, ChatGPT 키도 없어 나머지는 교정 생략", flush=True)
+                        break
+                    else:
+                        print(f"  [AI 교정] 건너뜀: OpenAI API 키가 없습니다.", flush=True)
+                        break
+
+                model = model or OPENAI_MODEL
+                candidates = [model] + ([OPENAI_FALLBACK] if model != OPENAI_FALLBACK else [])
+
+                response_text = None
+                input_tokens = 0
+                output_tokens = 0
+                for mdl in candidates:
+                    url = "https://api.openai.com/v1/chat/completions"
+                    headers = {
+                        "Authorization": f"Bearer {openai_key}",
+                        "Content-Type": "application/json"
+                    }
+                    payload = {
+                        "model": mdl,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "max_completion_tokens": 4096
+                    }
+                    body = json.dumps(payload).encode("utf-8")
+                    req = urllib.request.Request(url, data=body, headers=headers)
+                    try:
+                        with urllib.request.urlopen(req, timeout=90) as resp:
+                            raw = resp.read().decode("utf-8")
+                        data = json.loads(raw)
+                        response_text = data["choices"][0]["message"]["content"]
+                        # 토큰 정보 추출
+                        input_tokens = data.get("usage", {}).get("prompt_tokens", 0)
+                        output_tokens = data.get("usage", {}).get("completion_tokens", 0)
+                        break
+                    except urllib.error.HTTPError as e:
+                        if e.code in (404, 429):
+                            continue
+                        raise
+
+                if not response_text:
+                    print(f"  [AI 교정] 청크 {chunk_idx}/{len(chunks)}: 응답 없음", flush=True)
+                    continue
+
+                # JSON 파싱 (마크다운 펜스·군더더기 방어) + 형식 정규화
+                items = _fixes_items(_extract_json_obj(response_text))
+
+                # 수정 적용
+                chunk_offset = chunk_idx * chunk_size - chunk_size
+                applied = 0
+                for line_idx, fixed_text in items:
+                    if 0 <= line_idx < len(chunk_texts):
+                        abs_idx = chunk_offset + line_idx
+                        if abs_idx < len(cues):
+                            idx, start, end, _ = cues[abs_idx]
+                            cues[abs_idx] = (idx, start, end, fixed_text)
+                            total_fixed += 1
+                            applied += 1
+
+                # 비용 계산 (gpt-5-nano: 입력 $0.05/1M, 출력 $0.40/1M)
+                cost = (input_tokens * 0.05 + output_tokens * 0.40) / 1000000
+                print(f"  [AI 교정] 청크 {chunk_idx}/{len(chunks)}: 수정 {applied}줄, "
+                      f"토큰 입력 {input_tokens}·출력 {output_tokens} (약 ${cost:.4f})",
+                      flush=True)
+
+        except Exception as e:
+            print(f"  [AI 교정] 청크 {chunk_idx}/{len(chunks)}: {e}", flush=True)
+            continue
+
+    # 백업: 원본 보존 (이미 있으면 덮어쓰지 않음)
+    backup_path = srt_path + ".pre_ai.bak"
+    if not os.path.isfile(backup_path):
+        try:
+            shutil.copyfile(srt_path, backup_path)
+        except Exception:
+            pass
+
+    # SRT 재조립: 원본 타임코드·인덱스 보존, 텍스트만 교정된 내용으로
+    try:
+        new_srt_lines = []
+        for idx, start, end, text in cues:
+            h1 = int(start // 3600)
+            m1 = int((start % 3600) // 60)
+            s1 = int(start % 60)
+            ms1 = int(round((start - int(start)) * 1000))
+            h2 = int(end // 3600)
+            m2 = int((end % 3600) // 60)
+            s2 = int(end % 60)
+            ms2 = int(round((end - int(end)) * 1000))
+
+            new_srt_lines.append(f"{idx}\n")
+            new_srt_lines.append(f"{h1:02d}:{m1:02d}:{s1:02d},{ms1:03d} --> "
+                                f"{h2:02d}:{m2:02d}:{s2:02d},{ms2:03d}\n")
+            new_srt_lines.append(f"{text}\n\n")
+
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write("".join(new_srt_lines))
+    except Exception as e:
+        print(f"  [AI 교정] SRT 재작성 실패: {e}", flush=True)
+        return 0
+
+    return total_fixed
 
 
 def _ass_ts(sec: float) -> str:
@@ -845,7 +1196,7 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
              teaser_cuts: int = 0, teaser_sec: float = 1.5,
              impact_subs: str = "none", impact_size: int = 64,
              impact_color: str = "yellow", impact_pos: str = "center",
-             impact_pop: bool = True) -> None:
+             impact_pop: bool = True, ai_fix: str = "off", openai_key: str = "") -> None:
     video = os.path.abspath(video)
     out_path = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -867,6 +1218,27 @@ def finalize(video: str, srt: str, thumb: str, out_path: str,
             if not labels:
                 print("[AI 키워드] 키워드를 만들지 못했습니다(응답 확인). "
                       "라벨 없이 계속합니다.", flush=True)
+
+    # AI 자막 교정: 자막 하드번 전에 실행
+    if ai_fix != "off" and srt and os.path.isfile(srt):
+        try:
+            if ai_fix == "gemini":
+                if gemini_key:
+                    print(f"[AI 자막 교정] Gemini로 자막 교정 중...", flush=True)
+                    ai_fix_srt(srt, "gemini", gemini_key)
+                else:
+                    print(f"[AI 자막 교정] 건너뜀: Gemini API 키가 없습니다.", flush=True)
+            elif ai_fix == "openai":
+                if openai_key:
+                    print(f"[AI 자막 교정] OpenAI로 자막 교정 중...", flush=True)
+                    ai_fix_srt(srt, "openai", "", openai_key)
+                else:
+                    print(f"[AI 자막 교정] 건너뜀: OpenAI API 키가 없습니다.", flush=True)
+            elif ai_fix == "auto":
+                print(f"[AI 자막 교정] 자동 모드(Gemini 우선)로 교정 중...", flush=True)
+                ai_fix_srt(srt, "auto", gemini_key, openai_key)
+        except Exception as e:
+            print(f"[AI 자막 교정] 예외: {e}", flush=True)
 
     with tempfile.TemporaryDirectory(prefix="finalize_") as tmp:
         ts_files = []
@@ -1062,6 +1434,10 @@ def main():
                     help="임팩트 자막 위치 (기본 center)")
     ap.add_argument("--no-impact-pop", dest="impact_pop", action="store_false",
                     help="임팩트 자막 팝 효과 끄기 (기본 켜짐)")
+    ap.add_argument("--ai-fix", choices=["off", "auto", "gemini", "openai"], default="off",
+                    help="AI로 자막 교정 (기본 off)")
+    ap.add_argument("--openai-key", default="",
+                    help="OpenAI API 키 (--ai-fix openai/auto 사용 시)")
     ap.set_defaults(intro=True, cover=True, burn=True, impact_pop=True)
     args = ap.parse_args()
 
@@ -1114,7 +1490,7 @@ def main():
              teaser_sec=args.teaser_sec,
              impact_subs=args.impact_subs, impact_size=impact_size,
              impact_color=args.impact_color, impact_pos=args.impact_pos,
-             impact_pop=args.impact_pop)
+             impact_pop=args.impact_pop, ai_fix=args.ai_fix, openai_key=args.openai_key)
 
 
 if __name__ == "__main__":
