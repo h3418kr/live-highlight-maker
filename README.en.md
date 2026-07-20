@@ -301,6 +301,9 @@ Combine the summary video + (edited) subtitles + thumbnail image into an upload-
 |------|------|
 | Video file | Select the `_summary.mp4` made in STEP 1 |
 | Subtitle file (SRT) | Select the `.srt` edited in STEP 2 (or the original if unedited) |
+| AI Subtitle Fix | Auto-fix subtitle typos, misheard proper nouns, and spacing before hardsubbing on/off |
+| Fix Provider | Auto (Gemini free first, auto-switch to ChatGPT on quota exceed) / Gemini only / ChatGPT only |
+| ChatGPT API Key | Required only for ChatGPT-based fixing. Get from platform.openai.com (optional) |
 | Thumbnail image | Select a `.jpg` / `.png` image (e.g. your YouTube thumbnail) |
 | Intro video (optional) | A separate clip to prepend to the main video (leave empty if none) |
 | Outro video (optional) | A separate clip to append to the main video (leave empty if none) |

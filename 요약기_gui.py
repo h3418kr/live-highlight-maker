@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.1.0"
 
 # ── sv-ttk availability check ─────────────────────────────────────────────────────
 try:
@@ -317,7 +317,7 @@ STRINGS = {
         "ai_fix_provider": "교정 제공자",
         "ai_fix_provider_values": ["자동 (Gemini 우선)", "Gemini만", "ChatGPT만"],
         "openai_key": "ChatGPT API 키",
-        "openai_key_hint": "(기본: Gemini 무료 우선, 한도 초과 시 ChatGPT 자동 전환 · 영상당 1원 미만)",
+        "openai_key_hint": "(선택 · Gemini 한도 초과 시 사용)",
         "label_position": "소제목 위치",
         "label_position_hint": "(‘시작-끝 | 소제목’으로 입력한 소제목이 뜨는 자리)",
         "analyze_only": "구간 후보만 분석 (영상은 만들지 않음 — 빠름)",
@@ -425,7 +425,7 @@ STRINGS = {
         "ai_fix_provider": "교정 제공자",
         "ai_fix_provider_values": ["자동 (Gemini 우선)", "Gemini만", "ChatGPT만"],
         "openai_key": "ChatGPT API 키",
-        "openai_key_hint": "(기본: Gemini 무료 우선, 한도 초과 시 ChatGPT 자동 전환 · 영상당 1원 미만)",
+        "openai_key_hint": "(선택 · Gemini 한도 초과 시 사용)",
         # file dialog titles
         "dlg_outdir": "출력 폴더 선택",
         "dlg_video": "영상 파일 선택",
@@ -525,7 +525,7 @@ STRINGS = {
         "ai_fix_provider": "Fix Provider",
         "ai_fix_provider_values": ["Auto (Gemini first)", "Gemini only", "ChatGPT only"],
         "openai_key": "ChatGPT API Key",
-        "openai_key_hint": "(Default: Gemini free first, auto-switch to ChatGPT on quota exceed · <$0.001 per video)",
+        "openai_key_hint": "(optional · used if Gemini quota is exceeded)",
         "label_position": "Subtitle position",
         "label_position_hint": "(where the 'start-end | subtitle' text appears)",
         "analyze_only": "Analyze candidates only (no video output — fast)",
@@ -634,7 +634,7 @@ STRINGS = {
         "ai_fix_provider": "Fix Provider",
         "ai_fix_provider_values": ["Auto (Gemini first)", "Gemini only", "ChatGPT only"],
         "openai_key": "ChatGPT API Key",
-        "openai_key_hint": "(Default: Gemini free first, auto-switch to ChatGPT on quota exceed · <$0.001 per video)",
+        "openai_key_hint": "(optional · used if Gemini quota is exceeded)",
         # file dialog titles
         "dlg_outdir": "Select output folder",
         "dlg_video": "Select video file",
